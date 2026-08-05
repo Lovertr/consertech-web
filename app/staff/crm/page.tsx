@@ -118,7 +118,7 @@ function CrmBody() {
               <p className="text-[14px] text-muted">{selected.solution}</p>
             </div>
             {!readOnly && (
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Link href="/staff/documents" className="btn btn-primary text-[13px] py-2 px-3.5">สร้างใบเสนอราคา</Link>
                 <Link href="/staff/documents?tab=proposal" className="btn btn-outline text-[13px] py-2 px-3.5">สร้าง Proposal</Link>
               </div>

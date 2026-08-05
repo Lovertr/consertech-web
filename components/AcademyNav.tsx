@@ -16,10 +16,10 @@ export default function AcademyNav() {
 
   return (
     <div className="bg-ice/60 border-b border-ice">
-      <div className="container-site flex items-center justify-between h-12">
-        <div className="flex items-center gap-5">
-          <span className="text-[13px] font-bold text-brand tracking-wide uppercase">Academy</span>
-          <nav className="flex gap-4 overflow-x-auto">
+      <div className="container-site flex flex-wrap items-center justify-between gap-x-4 gap-y-1 min-h-12 py-1.5">
+        <div className="flex items-center gap-3 min-[600px]:gap-5 min-w-0">
+          <span className="hidden min-[600px]:inline text-[13px] font-bold text-brand tracking-wide uppercase">Academy</span>
+          <nav className="flex gap-3 min-[600px]:gap-4 overflow-x-auto max-w-full">
             {tabs.map((t) => {
               const active = t.href === "/academy" ? pathname === "/academy" : pathname.startsWith(t.href);
               return (

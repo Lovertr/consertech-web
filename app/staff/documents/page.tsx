@@ -26,19 +26,20 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
 
   return (
     <div className="grid gap-5 min-[1040px]:grid-cols-[1fr_360px] items-start">
-      <div className="card-white p-5">
+      <div className="card-white p-5 min-w-0">
         <div className="flex flex-wrap justify-between gap-2">
           <div>
             <p className="text-[11px] font-bold text-sky">เลขที่เอกสาร (รันอัตโนมัติ)</p>
             <p className="font-bold text-navy text-[18px]">QT-2569-015 <span className="text-[11px] font-semibold text-muted">(ร่าง)</span></p>
           </div>
           <select value={customer} onChange={(e) => setCustomer(e.target.value)} disabled={readOnly}
-            className="text-[13.5px] rounded-lg border border-ice px-3 py-2 bg-white h-fit">
+            className="text-[13.5px] rounded-lg border border-ice px-3 py-2 bg-white h-fit max-w-full">
             {deals.map((d) => <option key={d.id}>{d.customer}</option>)}
           </select>
         </div>
 
-        <table className="w-full mt-4 text-[13px]">
+        <div className="overflow-x-auto mt-4 -mx-1 px-1">
+        <table className="w-full min-w-[430px] text-[13px]">
           <thead>
             <tr className="bg-ice/70 text-navy">
               <th className="text-left px-3 py-2 font-bold">รายการ (จากข้อมูล Master)</th>
@@ -64,10 +65,11 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
             ))}
           </tbody>
         </table>
+        </div>
 
         {!readOnly && (
           <select
-            className="mt-3 text-[13px] rounded-lg border border-dashed border-sky px-3 py-2 bg-white text-sky"
+            className="mt-3 max-w-full text-[13px] rounded-lg border border-dashed border-sky px-3 py-2 bg-white text-sky"
             value=""
             onChange={(e) => { if (e.target.value) setItems([...items, { code: e.target.value, qty: 1 }]); }}
           >
@@ -94,7 +96,7 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
       </div>
 
       {/* ทะเบียนเอกสาร */}
-      <div className="card-white p-5">
+      <div className="card-white p-5 min-w-0">
         <h3 className="font-bold text-navy text-[15px]">ใบเสนอราคาล่าสุด</h3>
         <div className="mt-3 space-y-2.5">
           {quotations.map((q) => (
@@ -119,7 +121,7 @@ function ProposalTab({ readOnly }: { readOnly: boolean }) {
 
   return (
     <div className="grid gap-5 min-[1040px]:grid-cols-[380px_1fr] items-start">
-      <div className="card-white p-5">
+      <div className="card-white p-5 min-w-0">
         <p className="text-[11px] font-bold text-sky">เลขที่เอกสาร</p>
         <p className="font-bold text-navy text-[18px]">PR-2569-008 <span className="text-[11px] font-semibold text-muted">(ร่าง)</span></p>
         <label className="block text-[12.5px] font-semibold text-navy mt-3 mb-1">ดีลอ้างอิง</label>
@@ -145,7 +147,7 @@ function ProposalTab({ readOnly }: { readOnly: boolean }) {
         <p className="mt-2 text-[11px] text-muted/70 italic">AI ดึงข้อมูลจาก: บันทึก Survey ในดีล + ข้อมูล Master + Template บริษัท</p>
       </div>
 
-      <div className="card-white p-6 min-h-[380px]">
+      <div className="card-white p-6 min-h-[380px] min-w-0">
         {state !== "done" ? (
           <div className="h-full flex flex-col items-center justify-center text-center text-muted py-16">
             <p className="text-4xl">📄</p>
@@ -181,14 +183,14 @@ function DocumentsBody() {
 
   return (
     <>
-      <div className="flex gap-1 mb-4 bg-ice rounded-xl p-1 w-fit">
+      <div className="flex flex-wrap gap-1 mb-4 bg-ice rounded-xl p-1 w-fit max-w-full">
         {([["quotation", "ใบเสนอราคา"], ["proposal", "Proposal"]] as const).map(([k, label]) => (
           <button key={k} onClick={() => setTab(k)}
-            className={`px-4 py-2 rounded-lg text-[13.5px] font-semibold transition ${tab === k ? "bg-white text-navy shadow-sm" : "text-muted"}`}>
+            className={`px-3.5 min-[600px]:px-4 py-2 rounded-lg text-[13.5px] font-semibold transition ${tab === k ? "bg-white text-navy shadow-sm" : "text-muted"}`}>
             {label}
           </button>
         ))}
-        <span className="px-4 py-2 text-[13.5px] text-muted/50">ใบสั่งขาย (เฟสถัดไป)</span>
+        <span className="hidden min-[600px]:inline px-4 py-2 text-[13.5px] text-muted/50">ใบสั่งขาย (เฟสถัดไป)</span>
       </div>
       {readOnly && (
         <p className="mb-3 text-[12.5px] bg-ice text-sky font-semibold rounded-lg px-3 py-2 inline-block">👁️ ดูอย่างเดียว — สร้าง/แก้ไขได้เฉพาะฝ่ายขาย</p>
