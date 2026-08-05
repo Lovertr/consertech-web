@@ -6,10 +6,13 @@ export const company = {
   nameTh: "บริษัท คันเซอร์เทคช์ จำกัด",
   nameEn: "CONSERTECH CO., LTD.",
   tagline: "Consult · Service · Technology",
-  address: "41/69 หมู่ที่ 6 ต.บางตลาด อ.ปากเกร็ด จ.นนทบุรี 11120",
-  addressEn: "41/69 Moo 6, Bang Talat, Pak Kret, Nonthaburi 11120, Thailand",
+  address: "72, 49 หมู่ที่ 3 ถ.เลี่ยงเมืองปากเกร็ด ต.บางตลาด อ.ปากเกร็ด จ.นนทบุรี 11120",
+  addressEn: "72, 49 Moo 3, Liang Mueang Pak Kret Rd., Bang Talat, Pak Kret, Nonthaburi 11120, Thailand",
   phone: "062-363-5395",
   email: "sale01@cs-th.com",
+  mapsUrl: "https://maps.app.goo.gl/cDg9snyMGovX2cwG7",
+  mapsEmbed:
+    "https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d684.6746560223728!2d100.5162158137758!3d13.892685074198672!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x30e285006e2f5a67%3A0xfe7607aaf5b28e09!2sCONSERTECH%20CO.%2CLTD!5e0!3m2!1sth!2sth!4v1785904600878!5m2!1sth!2sth",
   vision:
     "ขับเคลื่อนความสำเร็จของคุณผ่านคำปรึกษาและบริการวิศวกรรม เพื่อยกระดับการทำงานสู่ระบบอัตโนมัติที่ล้ำสมัยและยั่งยืน",
 };

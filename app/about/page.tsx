@@ -49,9 +49,26 @@ export default function AboutPage() {
               <p className="text-muted">โทร {company.phone}</p>
               <p className="text-muted">{company.email}</p>
             </div>
-            <div className="mt-6 rounded-[14px] border border-ice bg-white h-[220px] flex items-center justify-center text-muted text-sm">
-              แผนที่ Google Maps (ใส่ embed เมื่อยืนยันพิกัด)
+            <div className="mt-6 rounded-[14px] overflow-hidden border border-ice">
+              <iframe
+                src={company.mapsEmbed}
+                width="100%"
+                height="260"
+                style={{ border: 0 }}
+                allowFullScreen
+                loading="lazy"
+                referrerPolicy="strict-origin-when-cross-origin"
+                title="แผนที่ CONSERTECH CO., LTD."
+              />
             </div>
+            <a
+              href={company.mapsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block mt-3 text-[14px] font-semibold text-brand hover:text-navy"
+            >
+              เปิดเส้นทางใน Google Maps →
+            </a>
           </div>
           <ContactForm />
         </div>
