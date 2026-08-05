@@ -4,7 +4,59 @@
 
 import { useState } from "react";
 import StaffShell, { useDept } from "@/components/staff/StaffShell";
-import { projects, tickets, type Project } from "@/lib/staffData";
+import { projects, tickets, ganttMonths, ganttRows, type Project } from "@/lib/staffData";
+
+// Gantt chart อย่างง่าย (จากโมดูล gantt ของ tomas-tech-pm)
+function GanttSection() {
+  const colW = 100 / ganttMonths.length;
+  const barColor = { brand: "bg-brand", amber: "bg-amber", sky: "bg-sky/70" } as const;
+  return (
+    <div className="mt-5 card-white p-5 overflow-x-auto">
+      <p className="font-bold text-navy mb-3">แผนงานรวม (Gantt) — มิ.ย. ถึง ต.ค. 69</p>
+      <div className="min-w-[720px]">
+        {/* หัวเดือน */}
+        <div className="flex text-[11.5px] font-bold text-sky border-b border-ice pb-1.5 ml-[220px]">
+          {ganttMonths.map((m) => (
+            <div key={m} style={{ width: `${colW}%` }} className="text-center border-l border-ice/60">{m}</div>
+          ))}
+        </div>
+        {/* แถวงาน */}
+        <div className="mt-2 space-y-1.5">
+          {ganttRows.map((r, i) => (
+            <div key={i} className="flex items-center text-[12px]">
+              <div className="w-[220px] shrink-0 pr-3">
+                <p className="font-semibold text-navy leading-tight truncate">{r.label}</p>
+                <p className="text-[10.5px] text-muted/70">{r.project}</p>
+              </div>
+              <div className="relative flex-1 h-6 rounded bg-ice/40">
+                {/* เส้นแบ่งเดือน */}
+                {ganttMonths.map((_, mi) => (
+                  <span key={mi} className="absolute top-0 bottom-0 border-l border-ice/60" style={{ left: `${mi * colW}%` }} />
+                ))}
+                <div
+                  className={`absolute top-0.5 bottom-0.5 rounded ${barColor[r.color ?? "brand"]}`}
+                  style={{ left: `${(r.start / ganttMonths.length) * 100}%`, width: `${(r.span / ganttMonths.length) * 100}%` }}
+                >
+                  {r.pct > 0 && (
+                    <span className="absolute inset-y-0 left-0 bg-navy/25 rounded-l" style={{ width: `${r.pct}%` }} />
+                  )}
+                  <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white">{r.pct}%</span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        {/* เส้นวันนี้ */}
+        <p className="mt-3 text-[11px] text-muted/70">
+          <span className="inline-block w-2.5 h-2.5 bg-sky/70 rounded-sm mr-1" />เสร็จแล้ว
+          <span className="inline-block w-2.5 h-2.5 bg-brand rounded-sm ml-3 mr-1" />กำลังทำ
+          <span className="inline-block w-2.5 h-2.5 bg-amber rounded-sm ml-3 mr-1" />รอเริ่ม
+          <span className="ml-3">— ระบบจริงลากปรับแผนได้และซิงก์กับ Milestone/งวดจ่ายอัตโนมัติ</span>
+        </p>
+      </div>
+    </div>
+  );
+}
 
 function ProjectsBody() {
   const [selected, setSelected] = useState<Project>(projects[0]);
@@ -79,6 +131,8 @@ function ProjectsBody() {
           </div>
         </div>
       </div>
+
+      <GanttSection />
 
       {/* Tickets */}
       <div className="mt-5 card-white overflow-hidden">

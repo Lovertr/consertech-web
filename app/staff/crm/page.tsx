@@ -32,6 +32,34 @@ function AiSummary({ deal }: { deal: Deal }) {
   );
 }
 
+// สแกนนามบัตรด้วย AI (จาก ai/scan-business-card ของ tomas-tech-pm)
+function BizCardScan() {
+  const [state, setState] = useState<"idle" | "scanning" | "done">("idle");
+  return (
+    <div className="mb-4 rounded-xl border border-dashed border-sky/60 bg-ice/30 p-3.5">
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          onClick={() => { setState("scanning"); setTimeout(() => setState("done"), 1100); }}
+          className="btn btn-outline text-[13px] py-2 px-3.5"
+        >
+          {state === "scanning" ? "✨ AI กำลังอ่านนามบัตร..." : "📇 สแกนนามบัตร (ถ่ายรูป/อัปโหลด)"}
+        </button>
+        <p className="text-[12px] text-muted">ได้นามบัตรจากงานแฟร์/เข้าพบลูกค้า → ถ่ายรูปแล้ว AI กรอกข้อมูลเข้า CRM ให้อัตโนมัติ</p>
+      </div>
+      {state === "done" && (
+        <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-[12.5px] bg-white rounded-lg border border-ice p-3">
+          <span><strong className="text-navy">ชื่อ:</strong> คุณประวิทย์ ใจดี</span>
+          <span><strong className="text-navy">ตำแหน่ง:</strong> ผจก.ฝ่ายผลิต</span>
+          <span><strong className="text-navy">บริษัท:</strong> โรงงานพลาสติก H</span>
+          <span><strong className="text-navy">โทร:</strong> 08x-xxx-1234</span>
+          <span><strong className="text-navy">อีเมล:</strong> prawit@example.co.th</span>
+          <button className="btn btn-primary text-[11.5px] py-1 px-2.5 ml-auto">＋ เพิ่มเป็น Lead ใหม่</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CrmBody() {
   const [selected, setSelected] = useState<Deal | null>(deals[0]);
   const { access } = useDept();
@@ -44,6 +72,7 @@ function CrmBody() {
           👁️ แผนกของคุณดูข้อมูลได้อย่างเดียว — แก้ไขได้เฉพาะฝ่ายขาย
         </p>
       )}
+      {!readOnly && <BizCardScan />}
 
       {/* Pipeline */}
       <div className="overflow-x-auto pb-2 -mx-1 px-1">

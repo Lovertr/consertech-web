@@ -19,7 +19,13 @@ const routes: Record<ModuleKey, string> = {
   dashboard: "/staff/dashboard",
   crm: "/staff/crm",
   documents: "/staff/documents",
+  clients: "/staff/clients",
   projects: "/staff/projects",
+  tasks: "/staff/tasks",
+  meetings: "/staff/meetings",
+  expenses: "/staff/expenses",
+  leave: "/staff/leave",
+  kpi: "/staff/kpi",
   finance: "/staff/finance",
   master: "/staff/master",
 };
