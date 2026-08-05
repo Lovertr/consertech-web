@@ -1,36 +1,45 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# CONSERTECH Website (Mockup — Frontend Only)
 
-## Getting Started
+เว็บไซต์ บริษัท คันเซอร์เทคช์ จำกัด (CONSERTECH CO., LTD.) สร้างตาม design handoff จาก Claude Design
+— **เวอร์ชันนี้เป็น mockup สำหรับนำเสนอ: ข้อมูลทั้งหมดเป็น mock/dummy ยังไม่เชื่อมต่อฐานข้อมูลหรือ backend ใดๆ**
 
-First, run the development server:
+## โครงสร้าง 3 โซน
+
+| โซน | เส้นทาง | เนื้อหา |
+|---|---|---|
+| A — Public | `/`, `/solution`, `/vehicles`, `/fleet-management`, `/blog`, `/about` | เว็บบริษัท, รถ AGV 5 รูปแบบ, บทความ, ฟอร์มติดต่อ |
+| B — Academy | `/academy`, `/academy/login`, `/academy/courses`, `/academy/dashboard` | สมาชิก 3 ระดับ, คอร์ส 6 คอร์ส, หน้าเรียน + progress, ใบประกาศ |
+| C — Staff | `/staff`, `/staff/dashboard` | Login ตามแผนก, Dashboard KPI 5 แผนก (dummy) |
+
+## เริ่มต้นใช้งาน
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+npm run dev        # http://localhost:3000
+npm run build      # ทดสอบ production build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Stack
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- Next.js (App Router) + TypeScript + Tailwind CSS v4
+- ฟอนต์ Sarabun (Google Fonts) — Design tokens ทั้งหมดอยู่ใน `app/globals.css`
+- ข้อมูล mock รวมไว้ที่ `lib/data.ts` ที่เดียว (แก้เนื้อหาเว็บที่ไฟล์นี้)
+- Mock auth (Zone B/C) ใช้ localStorage — ดู `lib/mockAuth.tsx`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## สิ่งที่ตั้งใจให้เป็น mock (รอเฟสถัดไป)
 
-## Learn More
+- **รูปภาพ**: ทุกจุดใช้ `components/Placeholder.tsx` เพราะรูป AGV ชุดเดิมยังไม่ยืนยันลิขสิทธิ์
+  — เมื่อได้รูปจริง วางไฟล์ใน `public/images/` แล้วเปลี่ยน `<Placeholder>` เป็น `next/image`
+- **ฟอร์มติดต่อ / Login**: UI เท่านั้น ยังไม่ต่อ backend/validation
+- **i18n**: สลับ TH/EN ได้เฉพาะเมนู + hero (`lib/i18n.tsx`) — รอคำแปลเต็มแล้วย้ายไป next-intl
+- **KPI Zone C**: dummy ทั้งหมด + มี department switcher ไว้เดโม (production ต้องผูก role จริงและลบ switcher)
+- **ราคาคอร์ส Premium**: placeholder ("เร็วๆ นี้") ตามการตัดสินใจที่ยังค้างอยู่
+- **ห้ามเพิ่ม**: ราคาสินค้า/ใบเสนอราคาจากเอกสารภายใน
 
-To learn more about Next.js, take a look at the following resources:
+## แผนเฟสถัดไป (เมื่อมีเซิร์ฟเวอร์/คลาวด์)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Supabase: Auth (member + staff แยก role), ตาราง courses/lessons/progress/certificates, CMS blog & vehicles
+2. Contact form → อีเมล/CRM + แจ้งเตือน Line
+3. i18n เต็มรูปแบบ + คำแปล EN ที่ผ่านการรีวิว
+4. เปลี่ยนรูป placeholder เป็นรูปจริงที่มีสิทธิ์ใช้งาน
+5. Deploy บน Vercel + โดเมนจริง + Analytics
