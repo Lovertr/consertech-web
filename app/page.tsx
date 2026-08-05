@@ -1,6 +1,6 @@
 import Link from "next/link";
 import Hero from "@/components/Hero";
-import Placeholder from "@/components/Placeholder";
+import AgvImage from "@/components/AgvImage";
 import { painPoints, solutions, vehicles, whyUs, processSteps } from "@/lib/data";
 
 export default function HomePage() {
@@ -55,7 +55,7 @@ export default function HomePage() {
           <div className="mt-8 grid gap-4 grid-cols-2 min-[900px]:grid-cols-5">
             {vehicles.map((v) => (
               <Link key={v.slug} href={`/vehicles/${v.slug}`} className="card p-4 block">
-                <Placeholder ratio="1/1" />
+                <AgvImage src={v.image} alt={v.name} ratio="1/1" />
                 <h3 className="mt-3 text-[14px] font-bold text-brand leading-snug">{v.name}</h3>
                 <p className="mt-1 text-[12.5px] text-muted">{v.short}</p>
               </Link>

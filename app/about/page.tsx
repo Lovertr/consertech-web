@@ -46,7 +46,7 @@ export default function AboutPage() {
             <div className="mt-6 space-y-2.5 text-[15px]">
               <p><strong className="text-navy">{company.nameTh}</strong> ({company.nameEn})</p>
               <p className="text-muted">{company.address}</p>
-              <p className="text-muted">โทร {company.phone} — {company.contactPerson}</p>
+              <p className="text-muted">โทร {company.phone}</p>
               <p className="text-muted">{company.email}</p>
             </div>
             <div className="mt-6 rounded-[14px] border border-ice bg-white h-[220px] flex items-center justify-center text-muted text-sm">

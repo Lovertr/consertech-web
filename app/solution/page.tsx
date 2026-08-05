@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import Placeholder from "@/components/Placeholder";
+import AgvImage from "@/components/AgvImage";
 import { comparison, fmsFeatures } from "@/lib/data";
 
 export const metadata: Metadata = {
@@ -44,7 +44,7 @@ export default function SolutionPage() {
                 </div>
               ))}
             </div>
-            <Placeholder ratio="1/1" label="รูป LiDAR-Guided AGV (รอไฟล์)" className="card p-4" />
+            <AgvImage src="/images/lifter-underride.png" alt="LiDAR-Guided AGV" ratio="1/1" className="card p-4" sizes="(max-width: 900px) 90vw, 40vw" />
           </div>
         </div>
       </section>

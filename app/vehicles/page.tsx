@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import Placeholder from "@/components/Placeholder";
+import AgvImage from "@/components/AgvImage";
 import { vehicles } from "@/lib/data";
 
 export const metadata: Metadata = {
@@ -24,7 +24,7 @@ export default function VehiclesPage() {
         <div className="mt-10 grid gap-6 min-[700px]:grid-cols-2 min-[1040px]:grid-cols-3">
           {vehicles.map((v) => (
             <Link key={v.slug} href={`/vehicles/${v.slug}`} className="card p-6 block">
-              <Placeholder ratio="4/3" />
+              <AgvImage src={v.image} alt={v.name} ratio="4/3" sizes="(max-width: 900px) 90vw, 33vw" />
               <h2 className="mt-4 text-[19px] font-bold text-brand">{v.name}</h2>
               <p className="mt-1 text-[14px] text-muted">{v.short}</p>
               <p className="mt-3 text-[13px] font-semibold text-navy">ดูรายละเอียด →</p>

@@ -17,9 +17,7 @@ export default function Footer() {
         <div className="text-sm space-y-2 text-[#CADCFC]">
           <p className="font-bold text-white text-base">ติดต่อเรา</p>
           <p>{company.address}</p>
-          <p>
-            โทร {company.phone} ({company.contactPerson})
-          </p>
+          <p>โทร {company.phone}</p>
           <p>{company.email}</p>
         </div>
         <div className="text-sm space-y-2">

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import Placeholder from "@/components/Placeholder";
+import AgvImage from "@/components/AgvImage";
 import { vehicles } from "@/lib/data";
 
 export function generateStaticParams() {
@@ -23,7 +23,7 @@ export default async function VehicleDetail({ params }: { params: Promise<{ slug
       <div className="container-site">
         <Link href="/vehicles" className="text-sky text-sm font-semibold">← รถ AGV ทั้งหมด</Link>
         <div className="mt-4 grid gap-10 min-[900px]:grid-cols-[1fr_1.2fr] items-start">
-          <Placeholder ratio="1/1" label={`รูป ${v.name} (รอไฟล์)`} className="card p-4" />
+          <AgvImage src={v.image} alt={v.name} ratio="1/1" className="card p-4" sizes="(max-width: 900px) 90vw, 45vw" />
           <div>
             <h1 className="text-[30px] min-[900px]:text-[40px] leading-[1.2] font-bold">{v.name}</h1>
             <p className="mt-1 text-sky font-semibold">{v.short}</p>

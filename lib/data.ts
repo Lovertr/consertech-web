@@ -8,9 +8,8 @@ export const company = {
   tagline: "Consult · Service · Technology",
   address: "41/69 หมู่ที่ 6 ต.บางตลาด อ.ปากเกร็ด จ.นนทบุรี 11120",
   addressEn: "41/69 Moo 6, Bang Talat, Pak Kret, Nonthaburi 11120, Thailand",
-  phone: "+66 6 3642 4914",
-  contactPerson: "คุณวิรุฬห์ (Project Manager)",
-  email: "VIROONPT@CS-TH.COM",
+  phone: "062-363-5395",
+  email: "sale01@cs-th.com",
   vision:
     "ขับเคลื่อนความสำเร็จของคุณผ่านคำปรึกษาและบริการวิศวกรรม เพื่อยกระดับการทำงานสู่ระบบอัตโนมัติที่ล้ำสมัยและยั่งยืน",
 };
@@ -59,6 +58,7 @@ export type Vehicle = {
   name: string;
   short: string;
   desc: string;
+  image: string; // รูปชั่วคราวจากเอกสาร Master — เปลี่ยนเป็นรูปที่ยืนยันลิขสิทธิ์ก่อนเผยแพร่จริง
   useCases: string[];
   specs: [string, string][];
 };
@@ -66,6 +66,7 @@ export type Vehicle = {
 export const vehicles: Vehicle[] = [
   {
     slug: "pallet-jack",
+    image: "/images/pallet-jack.jpg",
     name: "Pallet Jack / Forklift",
     short: "ยกพาเลทจากพื้นหรือชั้นวาง",
     desc: "รถแบบมีงายกเหมือนฟอร์คลิฟท์ สามารถยกพาเลทจากพื้นหรือวางบนชั้นวางได้ เหมาะกับการรับ-ส่งสินค้าจำนวนมากที่จัดวางบนพาเลท",
@@ -79,6 +80,7 @@ export const vehicles: Vehicle[] = [
   },
   {
     slug: "tugger-towing",
+    image: "/images/tugger-towing.png",
     name: "Tugger / Towing",
     short: "ลากจูงขบวนชั้นวางหลายคัน",
     desc: "ทำหน้าที่เป็นรถลาก จูงรถพ่วงหรือชั้นวางสินค้าต่อกันหลายคันเหมือนขบวนรถไฟ เหมาะกับการขนวัตถุดิบจำนวนมากในรอบเดียว",
@@ -92,6 +94,7 @@ export const vehicles: Vehicle[] = [
   },
   {
     slug: "lifter-underride",
+    image: "/images/lifter-underride.png",
     name: "Lifter / Underride",
     short: "มุดใต้ Rack ยกทั้งชุด",
     desc: "ตัวรถมุดเข้าใต้ชั้นวางสินค้า (Rack) หรือรถเข็น แล้วยกขึ้นเพื่อเคลื่อนย้ายไปทั้งชุด รุ่นแผงควบคุมด้านล่างสามารถลอดใต้ชั้นวางได้โดยตรง รองรับการส่งเข้าพื้นที่จัดเก็บแบบเรียงแถว",
@@ -105,6 +108,7 @@ export const vehicles: Vehicle[] = [
   },
   {
     slug: "conveyor-roller",
+    image: "/images/conveyor-roller.jpg",
     name: "Conveyor / Roller",
     short: "รับ-ส่งเข้าสายพานอัตโนมัติ",
     desc: "บนตัวรถติดตั้งสายพานหรือลูกกลิ้ง รับ-ส่งสินค้ากับสายพานในโรงงานได้อัตโนมัติแบบไร้รอยต่อ เน้นการป้อนของเข้าสายการผลิต",
@@ -118,6 +122,7 @@ export const vehicles: Vehicle[] = [
   },
   {
     slug: "unit-load",
+    image: "/images/unit-load.png",
     name: "Unit Load",
     short: "แท่นวางสินค้าบนตัวรถ",
     desc: "มีแท่นวางด้านบนเพื่อบรรทุกสินค้าโดยตรง เป็นพื้นฐานการออกแบบที่ปรับแต่งให้เหมาะกับสายการผลิตแต่ละแบบได้มากที่สุด",

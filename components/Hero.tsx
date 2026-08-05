@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import Placeholder from "./Placeholder";
+import AgvImage from "./AgvImage";
 import { useLang } from "@/lib/i18n";
 
 export default function Hero() {
@@ -27,7 +27,7 @@ export default function Hero() {
             </Link>
           </div>
         </div>
-        <Placeholder ratio="4/3" label="รูปรถ AGV จริง (รอไฟล์)" className="bg-white/95" />
+        <AgvImage src="/images/hero.jpg" alt="LiDAR-Guided AGV" ratio="4/3" sizes="(max-width: 900px) 90vw, 40vw" />
       </div>
     </section>
   );
