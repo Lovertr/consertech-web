@@ -330,8 +330,8 @@ export const expenseClaims: ExpenseClaim[] = [
   {
     no: "EXP-2569-042", employee: "ทีมขาย 1", dept: "Sales", category: "travel",
     purpose: "Site Survey โรงงานชิ้นส่วนยานยนต์ A",
-    ref: "D-001", date: "2 ส.ค. 69", route: "ปากเกร็ด → นิคมฯ บางปะอิน (ไป-กลับ)", km: 94, receipts: 2,
-    items: [{ label: "รถส่วนตัว 94 กม. × 6.5฿", amount: 611 }, { label: "ค่าทางด่วน", amount: 190 }],
+    ref: "D-001", date: "2 ส.ค. 69", route: "ปากเกร็ด → นิคมฯ บางปะอิน 47 กม. / ขากลับเลี่ยงทางด่วน 53 กม.", km: 100, receipts: 2,
+    items: [{ label: "รถส่วนตัว รวม 100 กม. × 6.5฿", amount: 650 }, { label: "ค่าทางด่วน (ขาไป)", amount: 95 }],
     status: "รออนุมัติ",
   },
   {
