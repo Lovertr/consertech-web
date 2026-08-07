@@ -4,13 +4,14 @@
 // ค่าเดินทาง: ต้นทาง-ปลายทางค้นหาแบบ Google Maps (จำลอง) คำนวณระยะทาง × 6.5 ฿/กม. + ทางด่วน
 // ทุกหมวดแนบรูปใบเสร็จได้ (หมวดที่มีใบเสร็จบังคับแนบ)
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import StaffShell from "@/components/staff/StaffShell";
 import {
-  expenseClaims, expensePolicy, expenseCategories, mapPlaces,
+  expenseClaims, expensePolicy, expenseCategories, mapPlaces, roadKm,
   expenseRatesByPosition, type PositionKey,
   deals, projects, type ExpenseCategoryKey,
 } from "@/lib/staffData";
+import "leaflet/dist/leaflet.css";
 
 const fmt = (n: number) => n.toLocaleString("th-TH");
 const catMeta = (k: ExpenseCategoryKey) => expenseCategories.find((c) => c.key === k)!;
@@ -70,9 +71,91 @@ function ReceiptUpload({ required }: { required: boolean }) {
 }
 
 // ค่าเดินทาง — ค้นหาต้นทาง/ปลายทาง + คำนวณระยะทาง (จำลอง Google Maps)
+type GeoPoint = { name: string; lat: number | null; lng: number | null };
+
+// หาสถานที่ที่รู้จักใกล้จุดที่คลิก (ภายใน ~3 กม.) เพื่อตั้งชื่อให้อัตโนมัติ
+function nearestPlace(lat: number, lng: number) {
+  let best: { name: string; d: number } | null = null;
+  for (const pl of mapPlaces) {
+    const d = roadKm({ lat, lng }, { lat: pl.lat, lng: pl.lng });
+    if (!best || d < best.d) best = { name: pl.name, d };
+  }
+  return best && best.d <= 4 ? best.name : null;
+}
+
+// แผนที่เลือกจุด (Leaflet + OpenStreetMap — เดโมฟรีไม่ใช้ API key; ระบบจริงใช้ Google Maps)
+function MapPicker({ from, to, target, onPick }: {
+  from: GeoPoint; to: GeoPoint;
+  target: "from" | "to";
+  onPick: (which: "from" | "to", lat: number, lng: number) => void;
+}) {
+  const divRef = useRef<HTMLDivElement>(null);
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const mapRef = useRef<any>(null);
+  const LRef = useRef<any>(null);
+  const layerRef = useRef<any>(null);
+  const pickRef = useRef(onPick);
+  pickRef.current = onPick;
+  const targetRef = useRef(target);
+  targetRef.current = target;
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const mod: any = await import("leaflet");
+      const L = mod.default ?? mod;
+      if (cancelled || !divRef.current || mapRef.current) return;
+      LRef.current = L;
+      const map = L.map(divRef.current, { attributionControl: false }).setView([13.75, 100.7], 8);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18 }).addTo(map);
+      L.control.attribution({ prefix: false }).addAttribution("© OpenStreetMap").addTo(map);
+      // หมุดสถานที่ที่รู้จัก (จุดฟ้าเล็ก) — ชี้เพื่อดูชื่อ คลิกเพื่อเลือก
+      mapPlaces.forEach((pl) => {
+        L.circleMarker([pl.lat, pl.lng], { radius: 5, color: "#5B9BD5", fillColor: "#5B9BD5", fillOpacity: 0.85, weight: 1 })
+          .addTo(map).bindTooltip(pl.name);
+      });
+      map.on("click", (e: any) => pickRef.current(targetRef.current, e.latlng.lat, e.latlng.lng));
+      layerRef.current = L.layerGroup().addTo(map);
+      mapRef.current = map;
+    })();
+    return () => { cancelled = true; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; } };
+  }, []);
+
+  // อัปเดตหมุดเริ่ม/สิ้นสุด + เส้นเชื่อม
+  useEffect(() => {
+    const L = LRef.current, map = mapRef.current, layer = layerRef.current;
+    if (!L || !map || !layer) return;
+    layer.clearLayers();
+    const pts: [number, number][] = [];
+    const mark = (pnt: GeoPoint, color: string, label: string) => {
+      if (pnt.lat == null || pnt.lng == null) return;
+      const icon = L.divIcon({
+        className: "",
+        html: `<div style="background:${color};color:#fff;font-size:10.5px;font-weight:700;border-radius:10px;padding:1.5px 7px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.45);transform:translate(-50%,-100%)">📍 ${label}</div>`,
+        iconSize: [0, 0],
+      });
+      L.marker([pnt.lat, pnt.lng], { icon }).addTo(layer);
+      pts.push([pnt.lat, pnt.lng]);
+    };
+    mark(from, "#15659E", "เริ่มต้น");
+    mark(to, "#F0A030", "สิ้นสุด");
+    if (pts.length === 2) {
+      L.polyline(pts, { color: "#15659E", weight: 2.5, dashArray: "7 7", opacity: 0.8 }).addTo(layer);
+      map.fitBounds(pts, { padding: [36, 36] });
+    } else if (pts.length === 1) {
+      map.setView(pts[0], Math.max(map.getZoom(), 10));
+    }
+  }, [from, to]);
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+
+  return <div ref={divRef} className="relative z-0 h-56 w-full rounded-xl border border-ice overflow-hidden" />;
+}
+
 function TravelForm({ onTotal }: { onTotal: (n: number) => void }) {
-  const [from, setFrom] = useState(mapPlaces[0].name);
-  const [to, setTo] = useState("");
+  const office = mapPlaces[0];
+  const [from, setFrom] = useState<GeoPoint>({ name: office.name, lat: office.lat, lng: office.lng });
+  const [to, setTo] = useState<GeoPoint>({ name: "", lat: null, lng: null });
+  const [target, setTarget] = useState<"from" | "to">("to");
   const [roundTrip, setRoundTrip] = useState(true);
   const [km, setKm] = useState(0);
   const [calcMsg, setCalcMsg] = useState<string | null>(null);
@@ -83,33 +166,67 @@ function TravelForm({ onTotal }: { onTotal: (n: number) => void }) {
   const total = kmAmount + toll + parking;
   onTotal(total);
 
+  const setPoint = (which: "from" | "to", p: GeoPoint) => (which === "from" ? setFrom(p) : setTo(p));
+
+  const typeName = (which: "from" | "to") => (v: string) => {
+    const pl = mapPlaces.find((x) => x.name === v.trim());
+    setPoint(which, { name: v, lat: pl?.lat ?? null, lng: pl?.lng ?? null });
+  };
+
+  const pickOnMap = (which: "from" | "to", lat: number, lng: number) => {
+    const known = nearestPlace(lat, lng);
+    const name = known ?? `จุดบนแผนที่ (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+    setPoint(which, { name, lat, lng });
+    if (which === "to") setTarget("to"); // เลือกปลายทางซ้ำได้เรื่อยๆ
+  };
+
   const calc = () => {
-    const a = mapPlaces.find((p) => p.name === from.trim());
-    const b = mapPlaces.find((p) => p.name === to.trim());
-    if (a && b) {
-      const oneWay = Math.max(Math.abs(a.km - b.km), 5);
+    if (from.lat != null && from.lng != null && to.lat != null && to.lng != null) {
+      const oneWay = roadKm({ lat: from.lat, lng: from.lng }, { lat: to.lat, lng: to.lng });
       setKm(roundTrip ? oneWay * 2 : oneWay);
-      setCalcMsg(`ระยะทางโดยประมาณจาก Google Maps: ${oneWay} กม./เที่ยว${roundTrip ? " × ไป-กลับ" : ""} (เดโม)`);
+      setCalcMsg(`ระยะทางโดยประมาณตามถนน: ${oneWay} กม./เที่ยว${roundTrip ? " × ไป-กลับ" : ""} (คำนวณจากพิกัดหมุด — ระบบจริงใช้เส้นทางขับจริงจาก Google Maps)`);
     } else {
-      setCalcMsg("ไม่พบสถานที่ในข้อมูลเดโม — กรอกระยะทางเองได้เลย (ระบบจริงค้นหาได้ทุกที่ผ่าน Google Maps API)");
+      setCalcMsg("ยังไม่ได้ระบุตำแหน่งครบ 2 จุด — พิมพ์เลือกจากรายการ หรือแตะบนแผนที่เพื่อปักหมุด");
     }
   };
+
+  const coordLabel = (p: GeoPoint) =>
+    p.lat != null && p.lng != null ? `📍 ${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}` : "— ยังไม่ระบุตำแหน่ง (พิมพ์เลือก หรือแตะบนแผนที่)";
 
   return (
     <div className="space-y-3">
       <div>
-        <label className="block font-semibold text-navy mb-1 text-[13.5px]">จุดเริ่มต้น</label>
-        <input list="map-places" value={from} onChange={(e) => setFrom(e.target.value)}
-          placeholder="พิมพ์ค้นหาสถานที่..." className="w-full rounded-lg border border-ice px-3 py-2" />
+        <label className="block font-semibold text-navy mb-1 text-[13.5px]">
+          จุดเริ่มต้น
+          {target === "from" && <span className="ml-1.5 text-[10.5px] font-bold bg-brand text-white rounded px-1.5 py-0.5 align-middle">กำลังปักหมุด</span>}
+        </label>
+        <input list="map-places" value={from.name} onChange={(e) => typeName("from")(e.target.value)} onFocus={() => setTarget("from")}
+          placeholder="พิมพ์ค้นหาสถานที่..." className={`w-full rounded-lg border px-3 py-2 ${target === "from" ? "border-brand" : "border-ice"}`} />
+        <p className={`mt-0.5 text-[11px] ${from.lat != null ? "text-sky" : "text-amber"}`}>{coordLabel(from)}</p>
       </div>
       <div>
-        <label className="block font-semibold text-navy mb-1 text-[13.5px]">จุดสิ้นสุด</label>
-        <input list="map-places" value={to} onChange={(e) => setTo(e.target.value)}
-          placeholder="พิมพ์ค้นหาสถานที่..." className="w-full rounded-lg border border-ice px-3 py-2" />
+        <label className="block font-semibold text-navy mb-1 text-[13.5px]">
+          จุดสิ้นสุด
+          {target === "to" && <span className="ml-1.5 text-[10.5px] font-bold bg-amber text-white rounded px-1.5 py-0.5 align-middle">กำลังปักหมุด</span>}
+        </label>
+        <input list="map-places" value={to.name} onChange={(e) => typeName("to")(e.target.value)} onFocus={() => setTarget("to")}
+          placeholder="พิมพ์ค้นหาสถานที่..." className={`w-full rounded-lg border px-3 py-2 ${target === "to" ? "border-amber" : "border-ice"}`} />
+        <p className={`mt-0.5 text-[11px] ${to.lat != null ? "text-sky" : "text-amber"}`}>{coordLabel(to)}</p>
       </div>
       <datalist id="map-places">
         {mapPlaces.map((p) => <option key={p.name} value={p.name} />)}
       </datalist>
+
+      {/* แผนที่: แตะเพื่อปักหมุดช่องที่เลือกอยู่ — กันสถานที่ชื่อซ้ำ/ผิดที่ */}
+      <div>
+        <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
+          <p className="text-[11.5px] text-muted">แตะแผนที่เพื่อปักหมุด: <strong className={target === "from" ? "text-brand" : "text-amber"}>{target === "from" ? "จุดเริ่มต้น" : "จุดสิ้นสุด"}</strong> · จุดฟ้า = สถานที่ที่บันทึกไว้</p>
+          <button type="button" onClick={() => setTarget(target === "from" ? "to" : "from")}
+            className="text-[11px] font-bold text-sky hover:text-brand">⇄ สลับหมุดที่จะปัก</button>
+        </div>
+        <MapPicker from={from} to={to} target={target} onPick={pickOnMap} />
+      </div>
+
       <div className="flex flex-wrap items-center gap-3">
         <label className="flex items-center gap-1.5 text-[13px] text-ink">
           <input type="checkbox" checked={roundTrip} onChange={(e) => setRoundTrip(e.target.checked)} /> ไป-กลับ (×2)

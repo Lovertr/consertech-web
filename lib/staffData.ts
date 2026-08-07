@@ -282,18 +282,27 @@ export const expenseRatesByPosition: { key: PositionKey; label: string; lodgingC
 ];
 
 // สถานที่จำลองสำหรับเดโมค้นหา Google Maps (ระยะทางโดยประมาณจากสำนักงาน ปากเกร็ด — ขาเดียว)
-export const mapPlaces: { name: string; km: number }[] = [
-  { name: "สำนักงาน CONSERTECH (ปากเกร็ด นนทบุรี)", km: 0 },
-  { name: "นิคมฯ บางปะอิน (อยุธยา)", km: 47 },
-  { name: "สวนอุตสาหกรรมโรจนะ (อยุธยา)", km: 62 },
-  { name: "ศูนย์กระจายสินค้า วังน้อย (อยุธยา)", km: 55 },
-  { name: "นิคมฯ ลาดกระบัง (กรุงเทพฯ)", km: 52 },
-  { name: "นิคมฯ บางพลี (สมุทรปราการ)", km: 48 },
-  { name: "นิคมฯ เวลโกรว์ (ฉะเชิงเทรา)", km: 78 },
-  { name: "นิคมฯ อมตะซิตี้ ชลบุรี", km: 96 },
-  { name: "นิคมฯ แหลมฉบัง (ชลบุรี)", km: 128 },
-  { name: "นิคมฯ มาบตาพุด (ระยอง)", km: 179 },
+export const mapPlaces: { name: string; lat: number; lng: number }[] = [
+  { name: "สำนักงาน CONSERTECH (ปากเกร็ด นนทบุรี)", lat: 13.893, lng: 100.4662 },
+  { name: "นิคมฯ บางปะอิน (อยุธยา)", lat: 14.2258, lng: 100.5842 },
+  { name: "สวนอุตสาหกรรมโรจนะ (อยุธยา)", lat: 14.3467, lng: 100.6353 },
+  { name: "ศูนย์กระจายสินค้า วังน้อย (อยุธยา)", lat: 14.2237, lng: 100.716 },
+  { name: "นิคมฯ ลาดกระบัง (กรุงเทพฯ)", lat: 13.7838, lng: 100.7885 },
+  { name: "นิคมฯ บางพลี (สมุทรปราการ)", lat: 13.5904, lng: 100.8156 },
+  { name: "นิคมฯ เวลโกรว์ (ฉะเชิงเทรา)", lat: 13.5675, lng: 101.0125 },
+  { name: "นิคมฯ อมตะซิตี้ ชลบุรี", lat: 13.4437, lng: 101.0072 },
+  { name: "นิคมฯ แหลมฉบัง (ชลบุรี)", lat: 13.0827, lng: 100.9146 },
+  { name: "นิคมฯ มาบตาพุด (ระยอง)", lat: 12.6764, lng: 101.1595 },
 ];
+
+// ระยะทาง (กม.) ระหว่างพิกัด — haversine × 1.35 (ตัวคูณถนนโดยประมาณ) — เดโมเท่านั้น
+export function roadKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const R = 6371, d = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * d, dLng = (b.lng - a.lng) * d;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * d) * Math.cos(b.lat * d) * Math.sin(dLng / 2) ** 2;
+  const straight = 2 * R * Math.asin(Math.sqrt(h));
+  return Math.max(Math.round(straight * 1.35), 1);
+}
 
 export type ExpenseClaim = {
   no: string;
