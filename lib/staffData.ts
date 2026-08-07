@@ -252,46 +252,87 @@ export const financeSummary = {
 // ── เบิกค่าใช้จ่าย/เดินทาง (ดัดแปลงจาก personal-vehicle-requests ของ tomas-tech-pm) ──
 // CONSERTECH ใช้รถส่วนตัว ยังไม่มีรถบริษัท → เบิกตามกิโลเมตร
 export const expensePolicy = {
-  kmRate: 5, // บาท/กม. สำหรับรถส่วนตัว (ตัวเลขสมมุติ — บริษัทกำหนดจริงภายหลัง)
-  note: "บริษัทยังไม่มีรถส่วนกลาง — พนักงานใช้รถส่วนตัวเบิกตามระยะทางจริง + ค่าทางด่วน/ที่จอดตามใบเสร็จ",
-  categories: ["ค่าเดินทาง (รถส่วนตัว/กม.)", "ค่าทางด่วน", "ค่าที่จอดรถ", "ค่าที่พัก (ค้างคืนหน้างาน)", "ค่าเบี้ยเลี้ยง", "อื่นๆ"],
+  kmRate: 6.5, // บาท/กม. สำหรับรถส่วนตัว
+  perDiem: 300, // เบี้ยเลี้ยง/วัน (ตัวเลขสมมุติ)
+  lodgingCap: 1200, // เพดานค่าที่พัก/คืน (ตัวเลขสมมุติ)
+  note: "บริษัทยังไม่มีรถส่วนกลาง — พนักงานใช้รถส่วนตัวเบิกตามระยะทางจริง × 6.5 ฿/กม. + ค่าทางด่วน/ที่จอดตามใบเสร็จ",
 };
+
+export type ExpenseCategoryKey = "travel" | "lodging" | "entertain" | "supplies" | "training" | "shipping" | "other";
+
+export const expenseCategories: { key: ExpenseCategoryKey; label: string; icon: string; receipt: boolean; hint: string }[] = [
+  { key: "travel", label: "ค่าเดินทาง", icon: "🚗", receipt: false, hint: `รถส่วนตัว ${expensePolicy.kmRate} ฿/กม. + ทางด่วน/ที่จอด (แนบใบเสร็จทางด่วน/ที่จอดถ้ามี)` },
+  { key: "lodging", label: "ค่าที่พัก / เบี้ยเลี้ยง", icon: "🏨", receipt: true, hint: `ค้างคืนหน้างาน — เพดานที่พัก ${expensePolicy.lodgingCap.toLocaleString()} ฿/คืน, เบี้ยเลี้ยง ${expensePolicy.perDiem} ฿/วัน (สมมุติ)` },
+  { key: "entertain", label: "ค่าเลี้ยงรับรอง", icon: "🍽️", receipt: true, hint: "เลี้ยงลูกค้า/พันธมิตร — ระบุลูกค้าและดีลที่เกี่ยวข้อง" },
+  { key: "supplies", label: "ค่าวัสดุอุปกรณ์", icon: "🧰", receipt: true, hint: "วัสดุสิ้นเปลือง เครื่องมือ อุปกรณ์หน้างาน" },
+  { key: "training", label: "ค่าอบรม / สัมมนา", icon: "🎓", receipt: true, hint: "คอร์ส งานสัมมนา ใบรับรอง — พัฒนาทักษะทีม" },
+  { key: "shipping", label: "ค่าจัดส่ง / เอกสาร", icon: "📦", receipt: true, hint: "ส่งอะไหล่/เอกสาร ไปรษณีย์ แมสเซนเจอร์" },
+  { key: "other", label: "ค่าใช้จ่ายอื่นๆ", icon: "📋", receipt: true, hint: "รายการนอกเหนือหมวดข้างต้น — ระบุรายละเอียดชัดเจน" },
+];
+
+// สถานที่จำลองสำหรับเดโมค้นหา Google Maps (ระยะทางโดยประมาณจากสำนักงาน ปากเกร็ด — ขาเดียว)
+export const mapPlaces: { name: string; km: number }[] = [
+  { name: "สำนักงาน CONSERTECH (ปากเกร็ด นนทบุรี)", km: 0 },
+  { name: "นิคมฯ บางปะอิน (อยุธยา)", km: 47 },
+  { name: "สวนอุตสาหกรรมโรจนะ (อยุธยา)", km: 62 },
+  { name: "ศูนย์กระจายสินค้า วังน้อย (อยุธยา)", km: 55 },
+  { name: "นิคมฯ ลาดกระบัง (กรุงเทพฯ)", km: 52 },
+  { name: "นิคมฯ บางพลี (สมุทรปราการ)", km: 48 },
+  { name: "นิคมฯ เวลโกรว์ (ฉะเชิงเทรา)", km: 78 },
+  { name: "นิคมฯ อมตะซิตี้ ชลบุรี", km: 96 },
+  { name: "นิคมฯ แหลมฉบัง (ชลบุรี)", km: 128 },
+  { name: "นิคมฯ มาบตาพุด (ระยอง)", km: 179 },
+];
 
 export type ExpenseClaim = {
   no: string;
   employee: string;
   dept: string;
+  category: ExpenseCategoryKey;
   purpose: string;
   ref: string; // ดีล/โปรเจกต์อ้างอิง
   date: string;
+  route?: string; // เส้นทาง (เฉพาะค่าเดินทาง)
   km?: number;
+  receipts?: number; // จำนวนรูปใบเสร็จที่แนบ
   items: { label: string; amount: number }[];
   status: "ร่าง" | "รออนุมัติ" | "อนุมัติแล้ว" | "จ่ายแล้ว";
 };
 
 export const expenseClaims: ExpenseClaim[] = [
   {
-    no: "EXP-2569-042", employee: "ทีมขาย 1", dept: "Sales", purpose: "Site Survey โรงงานชิ้นส่วนยานยนต์ A (บางปะอิน)",
-    ref: "D-001", date: "2 ส.ค. 69", km: 142,
-    items: [{ label: "รถส่วนตัว 142 กม. × 5฿", amount: 710 }, { label: "ค่าทางด่วน", amount: 190 }],
+    no: "EXP-2569-044", employee: "ทีมขาย 1", dept: "Sales", category: "entertain",
+    purpose: "เลี้ยงรับรองผู้จัดการโรงงานอาหาร C (เจรจาเงื่อนไขชำระเงิน)",
+    ref: "D-003", date: "3 ส.ค. 69", receipts: 1,
+    items: [{ label: "อาหาร 4 ท่าน (ตามใบเสร็จ)", amount: 2350 }],
     status: "รออนุมัติ",
   },
   {
-    no: "EXP-2569-041", employee: "ทีมวิศวกร 2", dept: "Engineering", purpose: "ติดตั้งระบบไซต์คลัง B (แหลมฉบัง) 2 วัน",
-    ref: "PJ-2569-02", date: "30–31 ก.ค. 69", km: 296,
-    items: [{ label: "รถส่วนตัว 296 กม. × 5฿", amount: 1480 }, { label: "ค่าทางด่วน", amount: 240 }, { label: "ที่พัก 1 คืน", amount: 850 }, { label: "เบี้ยเลี้ยง 2 วัน", amount: 600 }],
+    no: "EXP-2569-042", employee: "ทีมขาย 1", dept: "Sales", category: "travel",
+    purpose: "Site Survey โรงงานชิ้นส่วนยานยนต์ A",
+    ref: "D-001", date: "2 ส.ค. 69", route: "ปากเกร็ด → นิคมฯ บางปะอิน (ไป-กลับ)", km: 94, receipts: 2,
+    items: [{ label: "รถส่วนตัว 94 กม. × 6.5฿", amount: 611 }, { label: "ค่าทางด่วน", amount: 190 }],
+    status: "รออนุมัติ",
+  },
+  {
+    no: "EXP-2569-041", employee: "ทีมวิศวกร 2", dept: "Engineering", category: "lodging",
+    purpose: "ติดตั้งระบบไซต์คลัง B (แหลมฉบัง) 2 วัน",
+    ref: "PJ-2569-02", date: "30–31 ก.ค. 69", route: "ปากเกร็ด → นิคมฯ แหลมฉบัง (ไป-กลับ)", km: 256, receipts: 3,
+    items: [{ label: "รถส่วนตัว 256 กม. × 6.5฿", amount: 1664 }, { label: "ค่าทางด่วน", amount: 240 }, { label: "ที่พัก 1 คืน", amount: 850 }, { label: "เบี้ยเลี้ยง 2 วัน × 300฿", amount: 600 }],
     status: "อนุมัติแล้ว",
   },
   {
-    no: "EXP-2569-040", employee: "PM 1", dept: "PM", purpose: "ประชุม Kickoff ศูนย์กระจายสินค้า G",
-    ref: "PJ-2569-03", date: "25 ก.ค. 69", km: 68,
-    items: [{ label: "รถส่วนตัว 68 กม. × 5฿", amount: 340 }, { label: "ค่าที่จอดรถ", amount: 60 }],
+    no: "EXP-2569-040", employee: "ทีมวิศวกร 1", dept: "Engineering", category: "supplies",
+    purpose: "สายสัญญาณ + ขายึดเซ็นเซอร์ งานติดตั้งไซต์คลัง B",
+    ref: "PJ-2569-02", date: "28 ก.ค. 69", receipts: 1,
+    items: [{ label: "วัสดุอุปกรณ์ (ตามใบเสร็จ)", amount: 1840 }],
     status: "จ่ายแล้ว",
   },
   {
-    no: "EXP-2569-039", employee: "ทีมบริการ", dept: "Engineering", purpose: "งานซ่อมบำรุง TK-118 ไซต์ C",
-    ref: "TK-118", date: "22 ก.ค. 69", km: 84,
-    items: [{ label: "รถส่วนตัว 84 กม. × 5฿", amount: 420 }],
+    no: "EXP-2569-039", employee: "PM 1", dept: "PM", category: "travel",
+    purpose: "ประชุม Kickoff ศูนย์กระจายสินค้า G",
+    ref: "PJ-2569-03", date: "25 ก.ค. 69", route: "ปากเกร็ด → วังน้อย (ไป-กลับ)", km: 110, receipts: 1,
+    items: [{ label: "รถส่วนตัว 110 กม. × 6.5฿", amount: 715 }, { label: "ค่าที่จอดรถ", amount: 60 }],
     status: "จ่ายแล้ว",
   },
 ];
