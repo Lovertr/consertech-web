@@ -8,6 +8,7 @@ import { useRef, useState } from "react";
 import StaffShell from "@/components/staff/StaffShell";
 import {
   expenseClaims, expensePolicy, expenseCategories, mapPlaces,
+  expenseRatesByPosition, type PositionKey,
   deals, projects, type ExpenseCategoryKey,
 } from "@/lib/staffData";
 
@@ -143,19 +144,57 @@ function TravelForm({ onTotal }: { onTotal: (n: number) => void }) {
 }
 
 function LodgingForm({ onTotal }: { onTotal: (n: number) => void }) {
+  const [pos, setPos] = useState<PositionKey>("staff");
   const [nights, setNights] = useState(1);
   const [rate, setRate] = useState(850);
   const [days, setDays] = useState(2);
-  const total = nights * rate + days * expensePolicy.perDiem;
+  const r = expenseRatesByPosition.find((x) => x.key === pos)!;
+  const total = nights * rate + days * r.perDiem;
   onTotal(total);
   return (
-    <div className="rounded-xl bg-ice/50 p-3.5 space-y-2.5">
-      <NumField label="จำนวนคืนที่พัก" value={nights} onChange={setNights} suffix="คืน" />
-      <NumField label={`ค่าที่พัก/คืน (เพดาน ${fmt(expensePolicy.lodgingCap)}฿)`} value={rate} onChange={setRate} suffix="฿" />
-      <NumField label={`เบี้ยเลี้ยง (${expensePolicy.perDiem}฿/วัน) — จำนวนวัน`} value={days} onChange={setDays} suffix="วัน" />
-      {rate > expensePolicy.lodgingCap && (
-        <p className="text-[11.5px] text-amber font-semibold">⚠ เกินเพดานที่พัก — ต้องให้ผู้บริหารอนุมัติพิเศษ</p>
-      )}
+    <div className="space-y-3">
+      {/* ตำแหน่ง — ในระบบจริงดึงจากโปรไฟล์พนักงานอัตโนมัติ เลือกได้ที่นี่เพื่อเดโม */}
+      <div>
+        <label className="block font-semibold text-navy mb-1 text-[13.5px]">ตำแหน่งพนักงาน <span className="text-[10.5px] font-normal text-muted">(เดโม — ระบบจริงดึงจากโปรไฟล์อัตโนมัติ)</span></label>
+        <select value={pos} onChange={(e) => setPos(e.target.value as PositionKey)}
+          className="w-full max-w-full rounded-lg border border-ice px-3 py-2 bg-white">
+          {expenseRatesByPosition.map((x) => (
+            <option key={x.key} value={x.key}>{x.label} — ที่พัก {fmt(x.lodgingCap)}฿/คืน · เบี้ยเลี้ยง {x.perDiem}฿/วัน</option>
+          ))}
+        </select>
+      </div>
+      <div className="rounded-xl bg-ice/50 p-3.5 space-y-2.5">
+        <p className="text-[12px] font-bold text-navy">🏨 อัตราตามตำแหน่ง &ldquo;{r.label}&rdquo; — เพดานที่พัก {fmt(r.lodgingCap)}฿/คืน · เบี้ยเลี้ยง {r.perDiem}฿/วัน</p>
+        <NumField label="จำนวนคืนที่พัก" value={nights} onChange={setNights} suffix="คืน" />
+        <NumField label="ค่าที่พักจริง/คืน (ตามใบเสร็จ)" value={rate} onChange={setRate} suffix="฿" />
+        <NumField label={`เบี้ยเลี้ยง ${r.perDiem}฿/วัน — จำนวนวัน`} value={days} onChange={setDays} suffix="วัน" />
+        {rate > r.lodgingCap && (
+          <p className="text-[11.5px] text-amber font-semibold">⚠ เกินเพดานที่พักของตำแหน่งนี้ ({fmt(r.lodgingCap)}฿/คืน) — ต้องให้ผู้บริหารอนุมัติพิเศษ</p>
+        )}
+      </div>
+      {/* ตารางอัตราทุกตำแหน่ง */}
+      <details className="text-[12px] text-muted">
+        <summary className="cursor-pointer font-semibold text-sky">ดูตารางอัตราทุกตำแหน่ง</summary>
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full min-w-[300px] text-[12px]">
+            <thead><tr className="bg-ice/70 text-navy">
+              <th className="text-left px-2.5 py-1.5 font-bold">ตำแหน่ง</th>
+              <th className="text-right px-2.5 py-1.5 font-bold">ที่พัก/คืน</th>
+              <th className="text-right px-2.5 py-1.5 font-bold">เบี้ยเลี้ยง/วัน</th>
+            </tr></thead>
+            <tbody>
+              {expenseRatesByPosition.map((x, i) => (
+                <tr key={x.key} className={i % 2 ? "bg-ice/30" : ""}>
+                  <td className="px-2.5 py-1.5">{x.label}</td>
+                  <td className="px-2.5 py-1.5 text-right">{fmt(x.lodgingCap)} ฿</td>
+                  <td className="px-2.5 py-1.5 text-right">{x.perDiem} ฿</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="mt-1 text-[11px] text-muted/70 italic">อัตราเป็นตัวเลขสมมุติ — บริษัทกำหนดจริงในข้อมูล Master ได้</p>
+        </div>
+      </details>
     </div>
   );
 }

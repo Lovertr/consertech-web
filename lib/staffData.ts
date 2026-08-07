@@ -253,8 +253,8 @@ export const financeSummary = {
 // CONSERTECH ใช้รถส่วนตัว ยังไม่มีรถบริษัท → เบิกตามกิโลเมตร
 export const expensePolicy = {
   kmRate: 6.5, // บาท/กม. สำหรับรถส่วนตัว
-  perDiem: 300, // เบี้ยเลี้ยง/วัน (ตัวเลขสมมุติ)
-  lodgingCap: 1200, // เพดานค่าที่พัก/คืน (ตัวเลขสมมุติ)
+  perDiem: 300, // เบี้ยเลี้ยง/วัน ระดับพนักงาน (ตัวเลขสมมุติ — ดู expenseRatesByPosition)
+  lodgingCap: 1200, // เพดานที่พัก/คืน ระดับพนักงาน (ตัวเลขสมมุติ — ดู expenseRatesByPosition)
   note: "บริษัทยังไม่มีรถส่วนกลาง — พนักงานใช้รถส่วนตัวเบิกตามระยะทางจริง × 6.5 ฿/กม. + ค่าทางด่วน/ที่จอดตามใบเสร็จ",
 };
 
@@ -262,12 +262,23 @@ export type ExpenseCategoryKey = "travel" | "lodging" | "entertain" | "supplies"
 
 export const expenseCategories: { key: ExpenseCategoryKey; label: string; icon: string; receipt: boolean; hint: string }[] = [
   { key: "travel", label: "ค่าเดินทาง", icon: "🚗", receipt: false, hint: `รถส่วนตัว ${expensePolicy.kmRate} ฿/กม. + ทางด่วน/ที่จอด (แนบใบเสร็จทางด่วน/ที่จอดถ้ามี)` },
-  { key: "lodging", label: "ค่าที่พัก / เบี้ยเลี้ยง", icon: "🏨", receipt: true, hint: `ค้างคืนหน้างาน — เพดานที่พัก ${expensePolicy.lodgingCap.toLocaleString()} ฿/คืน, เบี้ยเลี้ยง ${expensePolicy.perDiem} ฿/วัน (สมมุติ)` },
+  { key: "lodging", label: "ค่าที่พัก / เบี้ยเลี้ยง", icon: "🏨", receipt: true, hint: "ค้างคืนหน้างาน — เพดานที่พักและเบี้ยเลี้ยงเป็นไปตามตำแหน่งของพนักงาน (ดูตารางอัตรา)" },
   { key: "entertain", label: "ค่าเลี้ยงรับรอง", icon: "🍽️", receipt: true, hint: "เลี้ยงลูกค้า/พันธมิตร — ระบุลูกค้าและดีลที่เกี่ยวข้อง" },
   { key: "supplies", label: "ค่าวัสดุอุปกรณ์", icon: "🧰", receipt: true, hint: "วัสดุสิ้นเปลือง เครื่องมือ อุปกรณ์หน้างาน" },
   { key: "training", label: "ค่าอบรม / สัมมนา", icon: "🎓", receipt: true, hint: "คอร์ส งานสัมมนา ใบรับรอง — พัฒนาทักษะทีม" },
   { key: "shipping", label: "ค่าจัดส่ง / เอกสาร", icon: "📦", receipt: true, hint: "ส่งอะไหล่/เอกสาร ไปรษณีย์ แมสเซนเจอร์" },
   { key: "other", label: "ค่าใช้จ่ายอื่นๆ", icon: "📋", receipt: true, hint: "รายการนอกเหนือหมวดข้างต้น — ระบุรายละเอียดชัดเจน" },
+];
+
+// อัตราค่าที่พัก/เบี้ยเลี้ยงตามตำแหน่ง (ตัวเลขสมมุติ — บริษัทกำหนดจริงภายหลัง)
+// ระบบจริง: ดึงตำแหน่งจากโปรไฟล์พนักงานอัตโนมัติ ไม่ต้องเลือกเอง
+export type PositionKey = "staff" | "senior" | "manager" | "executive";
+
+export const expenseRatesByPosition: { key: PositionKey; label: string; lodgingCap: number; perDiem: number }[] = [
+  { key: "staff", label: "พนักงาน / เจ้าหน้าที่", lodgingCap: 1200, perDiem: 300 },
+  { key: "senior", label: "อาวุโส / หัวหน้างาน", lodgingCap: 1500, perDiem: 350 },
+  { key: "manager", label: "ผู้จัดการ", lodgingCap: 2000, perDiem: 450 },
+  { key: "executive", label: "ผู้บริหาร", lodgingCap: 2500, perDiem: 600 },
 ];
 
 // สถานที่จำลองสำหรับเดโมค้นหา Google Maps (ระยะทางโดยประมาณจากสำนักงาน ปากเกร็ด — ขาเดียว)
@@ -318,7 +329,7 @@ export const expenseClaims: ExpenseClaim[] = [
     no: "EXP-2569-041", employee: "ทีมวิศวกร 2", dept: "Engineering", category: "lodging",
     purpose: "ติดตั้งระบบไซต์คลัง B (แหลมฉบัง) 2 วัน",
     ref: "PJ-2569-02", date: "30–31 ก.ค. 69", route: "ปากเกร็ด → นิคมฯ แหลมฉบัง (ไป-กลับ)", km: 256, receipts: 3,
-    items: [{ label: "รถส่วนตัว 256 กม. × 6.5฿", amount: 1664 }, { label: "ค่าทางด่วน", amount: 240 }, { label: "ที่พัก 1 คืน", amount: 850 }, { label: "เบี้ยเลี้ยง 2 วัน × 300฿", amount: 600 }],
+    items: [{ label: "รถส่วนตัว 256 กม. × 6.5฿", amount: 1664 }, { label: "ค่าทางด่วน", amount: 240 }, { label: "ที่พัก 1 คืน", amount: 850 }, { label: "เบี้ยเลี้ยง 2 วัน × 300฿ (ระดับพนักงาน)", amount: 600 }],
     status: "อนุมัติแล้ว",
   },
   {
