@@ -72,6 +72,7 @@ function ReceiptUpload({ required }: { required: boolean }) {
 
 // ค่าเดินทาง — ค้นหาต้นทาง/ปลายทาง + คำนวณระยะทาง (จำลอง Google Maps)
 type GeoPoint = { name: string; lat: number | null; lng: number | null };
+type LatLngLine = [number, number][];
 
 // หาสถานที่ที่รู้จักใกล้จุดที่คลิก (ภายใน ~4 กม.) เพื่อตั้งชื่อให้อัตโนมัติ
 function nearestPlace(lat: number, lng: number) {
@@ -83,11 +84,32 @@ function nearestPlace(lat: number, lng: number) {
   return best && best.d <= 4 ? best.name : null;
 }
 
-// แผนที่เลือกจุด (Leaflet + OpenStreetMap — เดโมฟรีไม่ใช้ API key; ระบบจริงใช้ Google Maps)
-function MapPicker({ points, activeIdx, onPick }: {
-  points: GeoPoint[];
-  activeIdx: number;
-  onPick: (lat: number, lng: number) => void;
+// เรียกบริการเส้นทางขับจริง (OSRM สาธารณะ ฟรี — เดโม; ระบบจริงใช้ Google Maps Directions API)
+async function fetchRoute(a: { lat: number; lng: number }, b: { lat: number; lng: number }):
+  Promise<{ km: number; line: LatLngLine } | null> {
+  try {
+    const url = `https://router.project-osrm.org/route/v1/driving/${a.lng},${a.lat};${b.lng},${b.lat}?overview=full&geometries=geojson`;
+    const r = await fetch(url, { signal: AbortSignal.timeout(7000) });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const rt = j?.routes?.[0];
+    if (!rt) return null;
+    return {
+      km: Math.round((rt.distance / 1000) * 10) / 10,
+      line: (rt.geometry.coordinates as [number, number][]).map(([lng, lat]) => [lat, lng]),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// แผนที่เลือกจุด + แสดงเส้นทางขับจริง (Leaflet + OpenStreetMap)
+function MapPicker({ from, to, target, onPick, routeGo, routeBack }: {
+  from: GeoPoint; to: GeoPoint;
+  target: "from" | "to";
+  onPick: (which: "from" | "to", lat: number, lng: number) => void;
+  routeGo: LatLngLine | null;
+  routeBack: LatLngLine | null;
 }) {
   const divRef = useRef<HTMLDivElement>(null);
   /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -96,6 +118,8 @@ function MapPicker({ points, activeIdx, onPick }: {
   const layerRef = useRef<any>(null);
   const pickRef = useRef(onPick);
   pickRef.current = onPick;
+  const targetRef = useRef(target);
+  targetRef.current = target;
 
   useEffect(() => {
     let cancelled = false;
@@ -112,180 +136,195 @@ function MapPicker({ points, activeIdx, onPick }: {
         L.circleMarker([pl.lat, pl.lng], { radius: 5, color: "#5B9BD5", fillColor: "#5B9BD5", fillOpacity: 0.85, weight: 1 })
           .addTo(map).bindTooltip(pl.name);
       });
-      map.on("click", (e: any) => pickRef.current(e.latlng.lat, e.latlng.lng));
+      map.on("click", (e: any) => pickRef.current(targetRef.current, e.latlng.lat, e.latlng.lng));
       layerRef.current = L.layerGroup().addTo(map);
       mapRef.current = map;
     })();
     return () => { cancelled = true; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; } };
   }, []);
 
-  // อัปเดตหมุดทุกจุด + เส้นเชื่อมตามลำดับ
+  // อัปเดตหมุด + เส้นทาง
   useEffect(() => {
     const L = LRef.current, map = mapRef.current, layer = layerRef.current;
     if (!L || !map || !layer) return;
     layer.clearLayers();
     const pts: [number, number][] = [];
-    points.forEach((pnt, i) => {
+    const mark = (pnt: GeoPoint, color: string, label: string) => {
       if (pnt.lat == null || pnt.lng == null) return;
-      const isActive = i === activeIdx;
-      const color = i === 0 ? "#15659E" : i === points.length - 1 ? "#F0A030" : "#5B9BD5";
       const icon = L.divIcon({
         className: "",
-        html: `<div style="background:${color};color:#fff;font-size:10.5px;font-weight:700;border-radius:10px;padding:1.5px 7px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.45);${isActive ? "outline:2px solid #0E3A5C;" : ""}transform:translate(-50%,-100%)">📍 ${i + 1}</div>`,
+        html: `<div style="background:${color};color:#fff;font-size:10.5px;font-weight:700;border-radius:10px;padding:1.5px 7px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.45);transform:translate(-50%,-100%)">📍 ${label}</div>`,
         iconSize: [0, 0],
       });
-      L.marker([pnt.lat, pnt.lng], { icon }).addTo(layer).bindTooltip(pnt.name || `จุดที่ ${i + 1}`);
+      L.marker([pnt.lat, pnt.lng], { icon }).addTo(layer);
       pts.push([pnt.lat, pnt.lng]);
-    });
-    if (pts.length >= 2) {
-      L.polyline(pts, { color: "#15659E", weight: 2.5, dashArray: "7 7", opacity: 0.8 }).addTo(layer);
-      map.fitBounds(pts, { padding: [36, 36] });
-    } else if (pts.length === 1) {
-      map.setView(pts[0], Math.max(map.getZoom(), 10));
+    };
+    mark(from, "#15659E", "เริ่มต้น");
+    mark(to, "#F0A030", "สิ้นสุด");
+    let bounds: [number, number][] = pts;
+    if (routeGo && routeGo.length > 1) {
+      L.polyline(routeGo, { color: "#15659E", weight: 3.5, opacity: 0.85 }).addTo(layer).bindTooltip("ขาไป");
+      bounds = bounds.concat(routeGo);
     }
-  }, [points, activeIdx]);
+    if (routeBack && routeBack.length > 1) {
+      L.polyline(routeBack, { color: "#F0A030", weight: 3, opacity: 0.85, dashArray: "8 6" }).addTo(layer).bindTooltip("ขากลับ");
+      bounds = bounds.concat(routeBack);
+    }
+    if (!routeGo && pts.length === 2) {
+      L.polyline(pts, { color: "#5B9BD5", weight: 2, dashArray: "6 6", opacity: 0.6 }).addTo(layer);
+    }
+    if (bounds.length >= 2) map.fitBounds(bounds, { padding: [30, 30] });
+    else if (pts.length === 1) map.setView(pts[0], Math.max(map.getZoom(), 10));
+  }, [from, to, routeGo, routeBack]);
   /* eslint-enable @typescript-eslint/no-explicit-any */
 
   return <div ref={divRef} className="relative z-0 h-56 w-full rounded-xl border border-ice overflow-hidden" />;
 }
 
-// ค่าเดินทางแบบหลายช่วง (legs) — ขาไป/ขากลับ/จุดแวะ ระยะทางแยกกันรายช่วง แก้เองได้
+// ค่าเดินทาง: ต้นทาง → ปลายทาง เลือกขาไปอย่างเดียว/ไป-กลับ
+// ขาไป-ขากลับคำนวณแยกจาก "เส้นทางที่รถวิ่งจริง" (คนละเส้นทางได้ ระยะไม่เท่ากันได้) — ถ้ามีแวะหลายที่ ให้ตั้งเบิกแยกรายการ
 function TravelForm({ onTotal }: { onTotal: (n: number) => void }) {
   const office = mapPlaces[0];
-  const [points, setPoints] = useState<GeoPoint[]>([
-    { name: office.name, lat: office.lat, lng: office.lng },
-    { name: "", lat: null, lng: null },
-  ]);
-  const [activeIdx, setActiveIdx] = useState(1);
-  const [legKms, setLegKms] = useState<number[]>([0]); // ระยะทางรายช่วง (points.length - 1 ช่วง)
+  const [from, setFrom] = useState<GeoPoint>({ name: office.name, lat: office.lat, lng: office.lng });
+  const [to, setTo] = useState<GeoPoint>({ name: "", lat: null, lng: null });
+  const [target, setTarget] = useState<"from" | "to">("to");
+  const [trip, setTrip] = useState<"oneway" | "round">("round");
+  const [kmGo, setKmGo] = useState(0);
+  const [kmBack, setKmBack] = useState(0);
+  const [routeGo, setRouteGo] = useState<LatLngLine | null>(null);
+  const [routeBack, setRouteBack] = useState<LatLngLine | null>(null);
+  const [calcing, setCalcing] = useState(false);
   const [calcMsg, setCalcMsg] = useState<string | null>(null);
   const [toll, setToll] = useState(0);
   const [parking, setParking] = useState(0);
 
-  const totalKm = legKms.reduce((a, b) => a + b, 0);
+  const totalKm = kmGo + (trip === "round" ? kmBack : 0);
   const kmAmount = Math.round(totalKm * expensePolicy.kmRate);
   const total = kmAmount + toll + parking;
   onTotal(total);
 
-  const setPointAt = (idx: number, pnt: GeoPoint) =>
-    setPoints((ps) => ps.map((x, i) => (i === idx ? pnt : x)));
+  const setPoint = (which: "from" | "to", pnt: GeoPoint) => {
+    (which === "from" ? setFrom : setTo)(pnt);
+    setRouteGo(null); setRouteBack(null); // จุดเปลี่ยน → เส้นทางเดิมใช้ไม่ได้
+  };
 
-  const typeName = (idx: number) => (v: string) => {
+  const typeName = (which: "from" | "to") => (v: string) => {
     const pl = mapPlaces.find((x) => x.name === v.trim());
-    setPointAt(idx, { name: v, lat: pl?.lat ?? null, lng: pl?.lng ?? null });
+    setPoint(which, { name: v, lat: pl?.lat ?? null, lng: pl?.lng ?? null });
   };
 
-  const pickOnMap = (lat: number, lng: number) => {
+  const pickOnMap = (which: "from" | "to", lat: number, lng: number) => {
     const known = nearestPlace(lat, lng);
-    const name = known ?? `จุดบนแผนที่ (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
-    setPointAt(activeIdx, { name, lat, lng });
+    setPoint(which, { name: known ?? `จุดบนแผนที่ (${lat.toFixed(4)}, ${lng.toFixed(4)})`, lat, lng });
   };
 
-  const addStop = () => {
-    setPoints((ps) => [...ps, { name: "", lat: null, lng: null }]);
-    setLegKms((ls) => [...ls, 0]);
-    setActiveIdx(points.length);
+  const calc = async () => {
+    if (from.lat == null || from.lng == null || to.lat == null || to.lng == null) {
+      setCalcMsg("ยังไม่ได้ระบุตำแหน่งครบ 2 จุด — พิมพ์เลือกจากรายการ หรือแตะบนแผนที่เพื่อปักหมุด");
+      return;
+    }
+    const a = { lat: from.lat, lng: from.lng }, b = { lat: to.lat, lng: to.lng };
+    setCalcing(true);
+    setCalcMsg("⏳ กำลังคำนวณจากเส้นทางขับจริง...");
+    const go = await fetchRoute(a, b);
+    const back = trip === "round" && go ? await fetchRoute(b, a) : null;
+    setCalcing(false);
+    if (go) {
+      setKmGo(go.km); setRouteGo(go.line);
+      if (trip === "round" && back) { setKmBack(back.km); setRouteBack(back.line); }
+      else if (trip === "round") { setKmBack(go.km); setRouteBack(null); }
+      setCalcMsg(
+        trip === "round"
+          ? `เส้นทางขับจริง: ขาไป ${go.km} กม.${back ? ` / ขากลับ ${back.km} กม.` : ` (ขากลับใช้ค่าเดียวกัน — เรียกเส้นทางไม่สำเร็จ)`} — สองขาอาจไม่เท่ากันตามเส้นทางที่วิ่งจริง แก้ตัวเลขได้ (เดโมใช้ OSRM; ระบบจริงใช้ Google Maps)`
+          : `เส้นทางขับจริง: ขาไป ${go.km} กม. (เดโมใช้ OSRM; ระบบจริงใช้ Google Maps)`
+      );
+    } else {
+      // fallback: เชื่อมต่อบริการเส้นทางไม่ได้ → ประมาณจากพิกัด
+      const approx = roadKm(a, b);
+      setKmGo(approx); if (trip === "round") setKmBack(approx);
+      setRouteGo(null); setRouteBack(null);
+      setCalcMsg(`เชื่อมต่อบริการเส้นทางไม่ได้ — ใช้ค่าประมาณจากพิกัด ${approx} กม./ขา (แก้ตัวเลขตามจริงได้เลย)`);
+    }
   };
 
-  const addReturn = () => {
-    setPoints((ps) => [...ps, { ...ps[0] }]);
-    setLegKms((ls) => [...ls, 0]);
-    setActiveIdx(points.length);
-  };
-
-  const removePoint = (idx: number) => {
-    if (points.length <= 2) return;
-    setPoints((ps) => ps.filter((_, i) => i !== idx));
-    setLegKms((ls) => ls.filter((_, i) => i !== Math.max(idx - 1, 0)));
-    setActiveIdx((a) => Math.min(a, points.length - 2));
-  };
-
-  const calc = () => {
-    let done = 0, missing = 0;
-    const next = legKms.map((cur, i) => {
-      const a = points[i], b = points[i + 1];
-      if (a.lat != null && a.lng != null && b.lat != null && b.lng != null) {
-        done++;
-        return roadKm({ lat: a.lat, lng: a.lng }, { lat: b.lat, lng: b.lng });
-      }
-      missing++;
-      return cur;
-    });
-    setLegKms(next);
-    setCalcMsg(
-      done > 0
-        ? `คำนวณแล้ว ${done} ช่วง${missing ? ` (อีก ${missing} ช่วงยังไม่ได้ปักหมุด — กรอกเองได้)` : ""} — แก้ตัวเลขรายช่วงได้ เช่น ขากลับใช้เส้นทางอื่น (เดโมคำนวณจากพิกัดหมุด; ระบบจริงใช้เส้นทางขับจริงจาก Google Maps)`
-        : "ยังไม่ได้ระบุตำแหน่ง — พิมพ์เลือกจากรายการ หรือแตะบนแผนที่เพื่อปักหมุด"
-    );
-  };
-
-  const pointLabel = (i: number) => {
-    if (i === 0) return "จุดเริ่มต้น";
-    if (i === points.length - 1)
-      return points[i].name && points[i].name === points[0].name ? "จุดสุดท้าย (กลับจุดเริ่มต้น)" : "จุดสุดท้าย";
-    return `จุดแวะที่ ${i}`;
-  };
-
-  const shortName = (pnt: GeoPoint, i: number) => pnt.name || `จุดที่ ${i + 1}`;
+  const coordLabel = (pnt: GeoPoint) =>
+    pnt.lat != null && pnt.lng != null ? `📍 ${pnt.lat.toFixed(4)}, ${pnt.lng.toFixed(4)}` : "— ยังไม่ระบุตำแหน่ง (พิมพ์เลือก หรือแตะบนแผนที่)";
 
   return (
     <div className="space-y-3">
-      {/* รายการจุดเดินทาง */}
-      <div className="space-y-2.5">
-        {points.map((pnt, i) => (
-          <div key={i}>
-            <div className="flex items-center justify-between gap-2">
-              <label className="block font-semibold text-navy mb-1 text-[13.5px]">
-                <span className="inline-block w-5 h-5 text-center leading-5 rounded-full bg-ice text-navy text-[11px] font-bold mr-1">{i + 1}</span>
-                {pointLabel(i)}
-                {activeIdx === i && <span className="ml-1.5 text-[10.5px] font-bold bg-brand text-white rounded px-1.5 py-0.5 align-middle">กำลังปักหมุด</span>}
-              </label>
-              {points.length > 2 && i > 0 && (
-                <button type="button" onClick={() => removePoint(i)} className="text-[11px] text-muted hover:text-amber font-bold shrink-0">✕ ลบจุดนี้</button>
-              )}
-            </div>
-            <input list="map-places" value={pnt.name} onChange={(e) => typeName(i)(e.target.value)} onFocus={() => setActiveIdx(i)}
-              placeholder="พิมพ์ค้นหาสถานที่..." className={`w-full rounded-lg border px-3 py-2 ${activeIdx === i ? "border-brand" : "border-ice"}`} />
-            <p className={`mt-0.5 text-[11px] ${pnt.lat != null ? "text-sky" : "text-amber"}`}>
-              {pnt.lat != null && pnt.lng != null ? `📍 ${pnt.lat.toFixed(4)}, ${pnt.lng.toFixed(4)}` : "— ยังไม่ระบุตำแหน่ง (พิมพ์เลือก หรือแตะบนแผนที่)"}
-            </p>
-          </div>
-        ))}
+      <div>
+        <label className="block font-semibold text-navy mb-1 text-[13.5px]">
+          จุดเริ่มต้น
+          {target === "from" && <span className="ml-1.5 text-[10.5px] font-bold bg-brand text-white rounded px-1.5 py-0.5 align-middle">กำลังปักหมุด</span>}
+        </label>
+        <input list="map-places" value={from.name} onChange={(e) => typeName("from")(e.target.value)} onFocus={() => setTarget("from")}
+          placeholder="พิมพ์ค้นหาสถานที่..." className={`w-full rounded-lg border px-3 py-2 ${target === "from" ? "border-brand" : "border-ice"}`} />
+        <p className={`mt-0.5 text-[11px] ${from.lat != null ? "text-sky" : "text-amber"}`}>{coordLabel(from)}</p>
+      </div>
+      <div>
+        <label className="block font-semibold text-navy mb-1 text-[13.5px]">
+          จุดสิ้นสุด
+          {target === "to" && <span className="ml-1.5 text-[10.5px] font-bold bg-amber text-white rounded px-1.5 py-0.5 align-middle">กำลังปักหมุด</span>}
+        </label>
+        <input list="map-places" value={to.name} onChange={(e) => typeName("to")(e.target.value)} onFocus={() => setTarget("to")}
+          placeholder="พิมพ์ค้นหาสถานที่..." className={`w-full rounded-lg border px-3 py-2 ${target === "to" ? "border-amber" : "border-ice"}`} />
+        <p className={`mt-0.5 text-[11px] ${to.lat != null ? "text-sky" : "text-amber"}`}>{coordLabel(to)}</p>
       </div>
       <datalist id="map-places">
         {mapPlaces.map((pl) => <option key={pl.name} value={pl.name} />)}
       </datalist>
-      <div className="flex flex-wrap gap-2">
-        <button type="button" onClick={addStop} className="btn btn-outline text-[12px] py-1.5 px-3">＋ เพิ่มจุดแวะ/ปลายทางถัดไป</button>
-        <button type="button" onClick={addReturn} className="btn btn-outline text-[12px] py-1.5 px-3">↩ เพิ่มขากลับ (กลับจุดเริ่มต้น)</button>
-      </div>
 
-      {/* แผนที่: แตะเพื่อปักหมุดจุดที่เลือกอยู่ — กันสถานที่ชื่อซ้ำ/ผิดที่ */}
+      {/* แผนที่: แตะเพื่อปักหมุด + แสดงเส้นทางขับจริง (น้ำเงิน=ขาไป, ส้มประ=ขากลับ) */}
       <div>
-        <p className="text-[11.5px] text-muted mb-1.5">
-          แตะแผนที่เพื่อปักหมุด: <strong className="text-brand">{pointLabel(activeIdx)}</strong> (แตะช่องกรอกเพื่อเปลี่ยนจุดที่จะปัก) · จุดฟ้า = สถานที่ที่บันทึกไว้
-        </p>
-        <MapPicker points={points} activeIdx={activeIdx} onPick={pickOnMap} />
+        <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
+          <p className="text-[11.5px] text-muted">แตะแผนที่เพื่อปักหมุด: <strong className={target === "from" ? "text-brand" : "text-amber"}>{target === "from" ? "จุดเริ่มต้น" : "จุดสิ้นสุด"}</strong> · จุดฟ้า = สถานที่ที่บันทึกไว้</p>
+          <button type="button" onClick={() => setTarget(target === "from" ? "to" : "from")}
+            className="text-[11px] font-bold text-sky hover:text-brand">⇄ สลับหมุดที่จะปัก</button>
+        </div>
+        <MapPicker from={from} to={to} target={target} onPick={pickOnMap} routeGo={routeGo} routeBack={routeBack} />
+        {(routeGo || routeBack) && (
+          <p className="mt-1 text-[11px] text-muted/80">
+            <span className="inline-block w-4 h-[3px] bg-brand align-middle mr-1" />ขาไป
+            {routeBack && <><span className="inline-block w-4 h-[3px] bg-amber align-middle ml-3 mr-1" />ขากลับ (เส้นประ)</>}
+            {" "}— เส้นทางที่รถวิ่งจริง
+          </p>
+        )}
       </div>
 
-      <button type="button" onClick={calc} className="btn btn-outline text-[12.5px] py-1.5 px-3">📍 คำนวณระยะทางทุกช่วง</button>
+      {/* ประเภทเที่ยว + คำนวณ */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <label className="flex items-center gap-1.5 text-[13px] text-ink">
+          <input type="radio" name="trip" checked={trip === "oneway"} onChange={() => { setTrip("oneway"); setRouteBack(null); }} /> ขาไปอย่างเดียว
+        </label>
+        <label className="flex items-center gap-1.5 text-[13px] text-ink">
+          <input type="radio" name="trip" checked={trip === "round"} onChange={() => setTrip("round")} /> ไป-กลับ
+        </label>
+        <button type="button" onClick={calc} disabled={calcing}
+          className="btn btn-outline text-[12.5px] py-1.5 px-3 disabled:opacity-60">
+          {calcing ? "⏳ กำลังคำนวณ..." : "📍 คำนวณระยะทางจากเส้นทางขับจริง"}
+        </button>
+      </div>
       {calcMsg && <p className="text-[11.5px] text-sky bg-ice/50 rounded-lg px-3 py-2">{calcMsg}</p>}
 
-      {/* ระยะทางรายช่วง — ขาไป/ขากลับไม่จำเป็นต้องเท่ากัน แก้แยกกันได้ */}
+      {/* ระยะทางขาไป/ขากลับ — แยกกัน ไม่ใช้ ×2 เพราะเส้นทางจริงสองขาไม่จำเป็นต้องเท่ากัน */}
       <div className="rounded-xl bg-ice/50 p-3.5 space-y-2.5">
-        <p className="text-[12px] font-bold text-navy">🚗 รถส่วนตัว — อัตรา {expensePolicy.kmRate} ฿/กม. (ระยะทางแยกรายช่วง)</p>
-        {legKms.map((lk, i) => (
-          <div key={i} className="flex items-center gap-2 min-w-0">
-            <label className="text-muted flex-1 min-w-0 text-[12.5px] truncate" title={`${shortName(points[i], i)} → ${shortName(points[i + 1], i + 1)}`}>
-              ช่วง {i + 1}: {shortName(points[i], i)} → {shortName(points[i + 1], i + 1)}
-            </label>
-            <input type="number" value={lk} onChange={(e) => setLegKms((ls) => ls.map((x, j) => (j === i ? +e.target.value || 0 : x)))}
-              className="w-20 shrink-0 rounded-lg border border-ice px-2.5 py-1.5 text-right bg-white" />
-            <span className="text-[11.5px] text-muted w-8 shrink-0">กม.</span>
+        <p className="text-[12px] font-bold text-navy">🚗 รถส่วนตัว — อัตรา {expensePolicy.kmRate} ฿/กม.</p>
+        <div className="flex items-center gap-2">
+          <label className="text-muted flex-1 text-[13px]">ระยะขาไป (กม.)</label>
+          <input type="number" step="0.1" value={kmGo} onChange={(e) => setKmGo(+e.target.value || 0)}
+            className="w-24 shrink-0 rounded-lg border border-ice px-2.5 py-1.5 text-right bg-white" />
+          <span className="font-semibold text-navy w-20 text-right shrink-0">{fmt(Math.round(kmGo * expensePolicy.kmRate))} ฿</span>
+        </div>
+        {trip === "round" && (
+          <div className="flex items-center gap-2">
+            <label className="text-muted flex-1 text-[13px]">ระยะขากลับ (กม.)</label>
+            <input type="number" step="0.1" value={kmBack} onChange={(e) => setKmBack(+e.target.value || 0)}
+              className="w-24 shrink-0 rounded-lg border border-ice px-2.5 py-1.5 text-right bg-white" />
+            <span className="font-semibold text-navy w-20 text-right shrink-0">{fmt(Math.round(kmBack * expensePolicy.kmRate))} ฿</span>
           </div>
-        ))}
+        )}
         <div className="flex items-center gap-2 border-t border-ice pt-2">
-          <span className="text-navy font-semibold flex-1 text-[13px]">รวมระยะทาง {fmt(totalKm)} กม. × {expensePolicy.kmRate}฿</span>
+          <span className="text-navy font-semibold flex-1 text-[13px]">รวม {fmt(Math.round(totalKm * 10) / 10)} กม. × {expensePolicy.kmRate}฿</span>
           <span className="font-semibold text-navy w-20 text-right shrink-0">{fmt(kmAmount)} ฿</span>
         </div>
         <div className="flex items-center gap-2">
@@ -300,6 +339,7 @@ function TravelForm({ onTotal }: { onTotal: (n: number) => void }) {
             className="w-24 shrink-0 rounded-lg border border-ice px-2.5 py-1.5 text-right bg-white" />
           <span className="font-semibold text-navy w-20 text-right shrink-0">{fmt(parking)} ฿</span>
         </div>
+        <p className="text-[11px] text-muted/70">* ถ้ามีแวะหลายที่ในทริปเดียว ให้ตั้งเบิกแยกเป็นรายการใหม่ต่อช่วง</p>
       </div>
     </div>
   );
