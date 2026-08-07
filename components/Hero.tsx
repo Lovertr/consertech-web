@@ -27,7 +27,7 @@ export default function Hero() {
             </Link>
           </div>
         </div>
-        <AgvImage src="/images/hero.jpg" alt="LiDAR-Guided AGV" ratio="4/3" sizes="(max-width: 900px) 90vw, 40vw" />
+        <AgvImage src="/images/hero-warehouse.png" alt="LiDAR-Guided AGV" ratio="4/3" sizes="(max-width: 900px) 90vw, 40vw" />
       </div>
     </section>
   );

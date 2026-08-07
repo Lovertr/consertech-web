@@ -44,7 +44,7 @@ export default function SolutionPage() {
                 </div>
               ))}
             </div>
-            <AgvImage src="/images/lifter-underride.png" alt="LiDAR-Guided AGV" ratio="1/1" className="card p-4" sizes="(max-width: 900px) 90vw, 40vw" />
+            <AgvImage src="/images/agv-lifter-underride.png" alt="LiDAR-Guided AGV" ratio="1/1" className="card p-4" sizes="(max-width: 900px) 90vw, 40vw" />
           </div>
         </div>
       </section>
