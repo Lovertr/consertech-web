@@ -3,7 +3,8 @@
 // โมดูลจัดการผู้ใช้ (แอดมิน/ผู้บริหาร) — ตำแหน่ง, วันลา, เปิด/ปิด OT, อัตราเบี้ยเลี้ยง-เดินทาง, สิทธิ์เข้าถึงโมดูล
 
 import { useState } from "react";
-import StaffShell, { useDept } from "@/components/staff/StaffShell";
+import { useEffect } from "react";
+import StaffShell, { useDept, OVERRIDES_KEY, PERMS_EVENT, type AccessOverrides } from "@/components/staff/StaffShell";
 import {
   employees, expenseRatesByPosition, expensePolicy, modulesMeta, permissions,
   type Employee, type PositionKey, type ModuleKey, type Access,
@@ -19,8 +20,22 @@ function UsersBody() {
   // สถานะแก้ไขจำลอง (mockup — เก็บในหน่วยความจำ)
   const [list, setList] = useState<Employee[]>(employees);
   const [selectedId, setSelectedId] = useState(employees[0].id);
-  const [accessOverride, setAccessOverride] = useState<Record<string, Partial<Record<ModuleKey, Access>>>>({});
+  const [accessOverride, setAccessOverride] = useState<AccessOverrides>({});
   const [saved, setSaved] = useState(false);
+
+  // โหลดสิทธิ์รายคนที่เคยบันทึกไว้
+  useEffect(() => {
+    try { setAccessOverride(JSON.parse(localStorage.getItem(OVERRIDES_KEY) ?? "{}")); } catch {}
+  }, []);
+
+  // บันทึก → มีผลจริงทันทีทั้ง Portal (เมนู/สิทธิ์ของผู้ใช้คนนั้นเปลี่ยนตาม)
+  const saveAll = () => {
+    try {
+      localStorage.setItem(OVERRIDES_KEY, JSON.stringify(accessOverride));
+      window.dispatchEvent(new Event(PERMS_EVENT));
+    } catch {}
+    setSaved(true);
+  };
 
   const emp = list.find((e) => e.id === selectedId)!;
   const rate = expenseRatesByPosition.find((r) => r.key === emp.position)!;
@@ -71,7 +86,7 @@ function UsersBody() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="font-bold text-navy text-[15px]">{emp.name} <span className="text-[11.5px] font-normal text-muted">({emp.id} · {deptLabel(emp.dept)})</span></p>
               {!readOnly && (
-                <button onClick={() => setSaved(true)} className="btn btn-primary text-[12.5px] py-1.5 px-3.5">
+                <button onClick={saveAll} className="btn btn-primary text-[12.5px] py-1.5 px-3.5">
                   {saved ? "✓ บันทึกแล้ว" : "บันทึกการตั้งค่า"}
                 </button>
               )}
@@ -157,8 +172,13 @@ function UsersBody() {
                 </tbody>
               </table>
             </div>
+            {saved && (
+              <p className="mt-2 text-[12px] font-semibold text-brand bg-ice/60 rounded-lg px-3 py-2">
+                ✓ บันทึกแล้ว — สิทธิ์มีผลจริงทันที: ลอง &ldquo;สลับผู้ใช้&rdquo; ที่แถบซ้ายเป็น {emp.name} จะเห็นเมนูตามสิทธิ์ที่ตั้งไว้
+              </p>
+            )}
             <p className="mt-2 text-[11px] text-muted/70 italic">
-              ระบบจริง: สิทธิ์ผูกกับบัญชีล็อกอิน (Supabase Auth + RLS) มีผลทันทีที่บันทึก และเก็บประวัติว่าใครแก้สิทธิ์อะไรเมื่อไหร่
+              ระบบจริง: สิทธิ์ผูกกับบัญชีล็อกอิน (Supabase Auth + RLS) มีผลทันทีที่บันทึก และเก็บประวัติว่าใครแก้สิทธิ์อะไรเมื่อไหร่ — ในเดโมนี้สิทธิ์รายคนถูกใช้จริงแล้ว: เมนูของผู้ใช้แต่ละคน = ค่าแผนก + ที่แก้ในหน้านี้
             </p>
           </div>
         </div>
