@@ -7,7 +7,7 @@ import type { Department } from "./data";
 // ── สิทธิ์ตามแผนก (ตาม Permission Matrix ใน Blueprint) ──
 export type ModuleKey =
   | "dashboard" | "crm" | "documents" | "clients" | "projects" | "tasks"
-  | "meetings" | "expenses" | "leave" | "kpi" | "finance" | "master";
+  | "meetings" | "expenses" | "leave" | "kpi" | "finance" | "master" | "users";
 export type Access = "full" | "read" | "none";
 
 export const modulesMeta: { key: ModuleKey; label: string; icon: string }[] = [
@@ -19,18 +19,19 @@ export const modulesMeta: { key: ModuleKey; label: string; icon: string }[] = [
   { key: "tasks", label: "งานของทีม", icon: "✅" },
   { key: "meetings", label: "ประชุม / บันทึกเสียง", icon: "🎙️" },
   { key: "expenses", label: "เบิกค่าใช้จ่าย", icon: "🚗" },
-  { key: "leave", label: "การลา", icon: "🌴" },
+  { key: "leave", label: "ข้อมูลการทำงาน", icon: "🕐" },
   { key: "kpi", label: "KPI / ประเมินผล", icon: "🎯" },
   { key: "finance", label: "การเงิน", icon: "💰" },
   { key: "master", label: "ข้อมูล Master", icon: "🗂️" },
+  { key: "users", label: "จัดการผู้ใช้", icon: "👥" },
 ];
 
 export const permissions: Record<Department, Record<ModuleKey, Access>> = {
-  sales:       { dashboard: "full", crm: "full", documents: "full", clients: "full", projects: "read", tasks: "full", meetings: "full", expenses: "full", leave: "full", kpi: "full", finance: "none", master: "read" },
-  engineering: { dashboard: "full", crm: "read", documents: "read", clients: "read", projects: "full", tasks: "full", meetings: "full", expenses: "full", leave: "full", kpi: "full", finance: "none", master: "full" },
-  pm:          { dashboard: "full", crm: "read", documents: "read", clients: "full", projects: "full", tasks: "full", meetings: "full", expenses: "full", leave: "full", kpi: "full", finance: "read", master: "read" },
-  admin:       { dashboard: "full", crm: "read", documents: "read", clients: "none", projects: "read", tasks: "full", meetings: "full", expenses: "full", leave: "full", kpi: "full", finance: "full", master: "read" },
-  management:  { dashboard: "full", crm: "read", documents: "full", clients: "read", projects: "read", tasks: "full", meetings: "full", expenses: "full", leave: "full", kpi: "full", finance: "read", master: "full" },
+  sales:       { dashboard: "full", crm: "full", documents: "full", clients: "full", projects: "read", tasks: "full", meetings: "full", expenses: "full", leave: "full", kpi: "full", finance: "none", master: "read", users: "none" },
+  engineering: { dashboard: "full", crm: "read", documents: "read", clients: "read", projects: "full", tasks: "full", meetings: "full", expenses: "full", leave: "full", kpi: "full", finance: "none", master: "full", users: "none" },
+  pm:          { dashboard: "full", crm: "read", documents: "read", clients: "full", projects: "full", tasks: "full", meetings: "full", expenses: "full", leave: "full", kpi: "full", finance: "read", master: "read", users: "none" },
+  admin:       { dashboard: "full", crm: "read", documents: "read", clients: "none", projects: "read", tasks: "full", meetings: "full", expenses: "full", leave: "full", kpi: "full", finance: "full", master: "read", users: "full" },
+  management:  { dashboard: "full", crm: "read", documents: "full", clients: "read", projects: "read", tasks: "full", meetings: "full", expenses: "full", leave: "full", kpi: "full", finance: "read", master: "full", users: "full" },
 };
 
 // ── CRM ──
@@ -476,6 +477,41 @@ export const ganttRows: { label: string; project: string; start: number; span: n
 ];
 
 // ── การลา (ดัดแปลงจาก leave ของ tomas-tech-pm) ──
+// ── ลงเวลาเข้า-เลิกงาน (Time Attendance) ──
+export const workSchedule = { start: "08:30", end: "17:30" }; // เวลางานปกติ — OT เริ่มนับหลังเวลาเลิกงาน
+
+export type AttendanceRecord = {
+  date: string; checkIn: string; checkOut: string | null;
+  inPlace: string; outPlace?: string; hours?: string; ot?: string | null;
+};
+
+export const attendanceLog: AttendanceRecord[] = [
+  { date: "ศ. 7 ส.ค.", checkIn: "08:21", checkOut: "19:05", inPlace: "สำนักงาน ปากเกร็ด", outPlace: "นิคมฯ บางปะอิน (ไซต์งาน)", hours: "8 ชม. 44 น.", ot: "1 ชม. 35 น." },
+  { date: "พฤ. 6 ส.ค.", checkIn: "08:28", checkOut: "17:34", inPlace: "สำนักงาน ปากเกร็ด", outPlace: "สำนักงาน ปากเกร็ด", hours: "8 ชม. 6 น.", ot: null },
+  { date: "พ. 5 ส.ค.", checkIn: "08:15", checkOut: "18:40", inPlace: "นิคมฯ แหลมฉบัง (ไซต์งาน)", outPlace: "นิคมฯ แหลมฉบัง (ไซต์งาน)", hours: "9 ชม. 25 น.", ot: "1 ชม. 10 น." },
+  { date: "อ. 4 ส.ค.", checkIn: "08:30", checkOut: "17:31", inPlace: "สำนักงาน ปากเกร็ด", outPlace: "สำนักงาน ปากเกร็ด", hours: "8 ชม. 1 น.", ot: null },
+];
+
+// ── พนักงาน (สำหรับหน้าจัดการผู้ใช้ — แอดมิน/ผู้บริหาร) ──
+export type Employee = {
+  id: string;
+  name: string;
+  dept: Department;
+  position: PositionKey;
+  otEnabled: boolean;
+  leaveQuota: { annual: number; sick: number; personal: number };
+};
+
+export const employees: Employee[] = [
+  { id: "EMP-001", name: "ทีมขาย 1", dept: "sales", position: "staff", otEnabled: true, leaveQuota: { annual: 10, sick: 30, personal: 6 } },
+  { id: "EMP-002", name: "ทีมขาย 2", dept: "sales", position: "staff", otEnabled: true, leaveQuota: { annual: 10, sick: 30, personal: 6 } },
+  { id: "EMP-003", name: "ทีมวิศวกร 1", dept: "engineering", position: "senior", otEnabled: true, leaveQuota: { annual: 12, sick: 30, personal: 6 } },
+  { id: "EMP-004", name: "ทีมวิศวกร 2", dept: "engineering", position: "staff", otEnabled: true, leaveQuota: { annual: 10, sick: 30, personal: 6 } },
+  { id: "EMP-005", name: "PM 1", dept: "pm", position: "manager", otEnabled: false, leaveQuota: { annual: 12, sick: 30, personal: 6 } },
+  { id: "EMP-006", name: "บัญชี 1", dept: "admin", position: "staff", otEnabled: false, leaveQuota: { annual: 10, sick: 30, personal: 6 } },
+  { id: "EMP-007", name: "ผู้บริหาร", dept: "management", position: "executive", otEnabled: false, leaveQuota: { annual: 15, sick: 30, personal: 6 } },
+];
+
 export const leaveBalance = { annual: { used: 3, total: 10 }, sick: { used: 1, total: 30 }, personal: { used: 1, total: 6 } };
 export const leaveRequests = [
   { no: "LV-088", employee: "ทีมวิศวกร 2", type: "ลาพักร้อน", range: "14–15 ส.ค. 69 (2 วัน)", note: "ธุระครอบครัว", status: "รออนุมัติ" },

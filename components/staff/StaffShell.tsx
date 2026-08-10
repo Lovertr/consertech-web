@@ -28,10 +28,12 @@ const routes: Record<ModuleKey, string> = {
   kpi: "/staff/kpi",
   finance: "/staff/finance",
   master: "/staff/master",
+  users: "/staff/users",
 };
 
 export default function StaffShell({ children, title }: { children: ReactNode; title?: string }) {
   const [dept, setDept] = useState<Department>("sales");
+  const [ready, setReady] = useState(false); // รอโหลดแผนกจาก localStorage ก่อนค่อยเช็กสิทธิ์ redirect
   const pathname = usePathname();
   const router = useRouter();
 
@@ -40,6 +42,7 @@ export default function StaffShell({ children, title }: { children: ReactNode; t
       const saved = localStorage.getItem("consertech-staff-dept") as Department | null;
       if (saved && permissions[saved]) setDept(saved);
     } catch {}
+    setReady(true);
   }, []);
 
   const access = (m: ModuleKey) => permissions[dept][m];
@@ -47,9 +50,10 @@ export default function StaffShell({ children, title }: { children: ReactNode; t
 
   // ถ้าแผนกไม่มีสิทธิ์หน้าปัจจุบัน ให้เด้งกลับภาพรวม
   useEffect(() => {
+    if (!ready) return;
     const current = (Object.entries(routes) as [ModuleKey, string][]).find(([, r]) => pathname.startsWith(r));
     if (current && permissions[dept][current[0]] === "none") router.replace("/staff/dashboard");
-  }, [dept, pathname, router]);
+  }, [ready, dept, pathname, router]);
 
   return (
     <DeptCtx.Provider value={{ dept, access }}>
