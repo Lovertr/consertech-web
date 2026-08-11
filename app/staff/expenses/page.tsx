@@ -5,9 +5,9 @@
 // ทุกหมวดแนบรูปใบเสร็จได้ (หมวดที่มีใบเสร็จบังคับแนบ)
 
 import { useEffect, useRef, useState } from "react";
-import StaffShell from "@/components/staff/StaffShell";
+import StaffShell, { useDept } from "@/components/staff/StaffShell";
 import {
-  expenseClaims, expensePolicy, expenseCategories, mapPlaces, roadKm,
+  expensePolicy, expenseCategories, mapPlaces, roadKm,
   expenseRatesByPosition, type PositionKey,
   projects, type ExpenseCategoryKey,
 } from "@/lib/staffData";
@@ -31,8 +31,20 @@ function NumField({ label, value, onChange, suffix }: { label: string; value: nu
 
 // แนบรูปใบเสร็จ — อัปโหลดแล้ว AI อ่านยอด/ร้านค้า/วันที่ให้จริง
 type ReceiptInfo = { vendor?: string; date?: string; total?: number; vat?: number };
-function ReceiptUpload({ required }: { required: boolean }) {
+function ReceiptUpload({ required, onUrls }: { required: boolean; onUrls?: (urls: string[]) => void }) {
   const [previews, setPreviews] = useState<string[]>([]);
+  const urlsRef = useRef<string[]>([]);
+  const uploadFile = async (f: File) => {
+    if (!supabase) return;
+    const ext = f.name.split(".").pop() ?? "jpg";
+    const path = `receipts/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const { error } = await supabase.storage.from("attachments").upload(path, f, { contentType: f.type });
+    if (!error) {
+      const { data } = supabase.storage.from("attachments").getPublicUrl(path);
+      urlsRef.current = [...urlsRef.current, data.publicUrl];
+      onUrls?.(urlsRef.current);
+    }
+  };
   const [ocr, setOcr] = useState<ReceiptInfo | null>(null);
   const [ocrState, setOcrState] = useState<"idle" | "loading" | "error">("idle");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -75,6 +87,7 @@ function ReceiptUpload({ required }: { required: boolean }) {
         onChange={(e) => {
           const files = Array.from(e.target.files ?? []);
           setPreviews((p) => [...p, ...files.map((f) => URL.createObjectURL(f))]);
+          files.forEach(uploadFile); // อัปโหลดเก็บจริงเป็นหลักฐาน
           if (files[0]) readReceipt(files[0]); // AI อ่านใบแรกที่แนบ
         }}
         className="hidden"
@@ -476,9 +489,11 @@ function SimpleAmountForm({ placeholder, onTotal }: { placeholder: string; onTot
 }
 
 // อ้างอิงดีล/โปรเจกต์ — เลือก "อื่นๆ" ได้กรณีไม่มีดีล/โปรเจกต์ (เช่น เข้าพบลูกค้าใหม่)
-function RefPicker() {
-  const [ref, setRef] = useState("");
-  const [other, setOther] = useState("");
+function RefPicker({ onChange }: { onChange?: (v: string) => void }) {
+  const [ref, setRefState] = useState("");
+  const [other, setOtherState] = useState("");
+  const setRef = (v: string) => { setRefState(v); onChange?.(v === "__other__" ? other : v); };
+  const setOther = (v: string) => { setOtherState(v); onChange?.(v); };
   const [dbDeals, setDbDeals] = useState<{ id: number; customer_name: string }[]>([]);
   useEffect(() => {
     supabase?.from("deals").select("id,customer_name").order("created_at", { ascending: false })
@@ -502,8 +517,13 @@ function RefPicker() {
   );
 }
 
-function ClaimForm() {
+function ClaimForm({ empId, onSaved }: { empId: string; onSaved: () => void }) {
   const [cat, setCat] = useState<ExpenseCategoryKey>("travel");
+  const [purpose, setPurpose] = useState("");
+  const [refDoc, setRefDoc] = useState("");
+  const [receiptUrls, setReceiptUrls] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const totalRef = useRef(0);
   const [, force] = useState(0);
   const setTotal = (n: number) => {
@@ -511,10 +531,25 @@ function ClaimForm() {
   };
   const meta = catMeta(cat);
 
+  const submit = async () => {
+    if (!supabase || !empId) { setMsg({ ok: false, text: "ยังไม่ได้เข้าสู่ระบบ" }); return; }
+    if (totalRef.current <= 0) { setMsg({ ok: false, text: "ยอดเบิกยังเป็น 0 — กรอกข้อมูลค่าใช้จ่ายก่อน" }); return; }
+    if (meta.receipt && receiptUrls.length === 0) { setMsg({ ok: false, text: "หมวดนี้บังคับแนบรูปใบเสร็จ" }); return; }
+    setSaving(true); setMsg(null);
+    const { error } = await supabase.from("expense_claims").insert({
+      emp_id: empId, category: cat, detail: purpose.trim() || null, ref_doc: refDoc || null,
+      amount: totalRef.current, receipt_url: receiptUrls[0] ?? null, status: "รออนุมัติ",
+    });
+    setSaving(false);
+    if (error) { setMsg({ ok: false, text: String(error.message) }); return; }
+    setMsg({ ok: true, text: "✅ ส่งเบิกแล้ว — รอหัวหน้าอนุมัติ" });
+    setPurpose(""); setReceiptUrls([]); totalRef.current = 0; force((x) => x + 1);
+    onSaved();
+  };
+
   return (
     <div className="card-white p-4 min-[600px]:p-5 min-w-0">
       <p className="font-bold text-navy text-[15px]">สร้างรายการเบิกใหม่</p>
-      <p className="text-[11px] font-bold text-sky mt-0.5">เลขที่ EXP-2569-045 (รันอัตโนมัติ)</p>
 
       {/* เลือกประเภท */}
       <div className="mt-3 flex flex-wrap gap-1.5">
@@ -532,9 +567,10 @@ function ClaimForm() {
       <div className="mt-4 space-y-3 text-[13.5px]">
         <div>
           <label className="block font-semibold text-navy mb-1">วัตถุประสงค์ / งานที่ไป</label>
-          <input defaultValue="Site Survey ลูกค้าใหม่" className="w-full rounded-lg border border-ice px-3 py-2" />
+          <input value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="เช่น Site Survey ลูกค้าใหม่"
+            className="w-full rounded-lg border border-ice px-3 py-2" />
         </div>
-        <RefPicker />
+        <RefPicker onChange={setRefDoc} />
 
         {cat === "travel" && <TravelForm onTotal={setTotal} />}
         {cat === "lodging" && <LodgingForm onTotal={setTotal} />}
@@ -544,28 +580,62 @@ function ClaimForm() {
         {cat === "shipping" && <SimpleAmountForm placeholder="ส่งอะไร ถึงใคร ผู้ให้บริการ" onTotal={setTotal} />}
         {cat === "other" && <SimpleAmountForm placeholder="ระบุรายละเอียดค่าใช้จ่าย" onTotal={setTotal} />}
 
-        <ReceiptUpload required={meta.receipt} />
+        <ReceiptUpload key={cat} required={meta.receipt} onUrls={setReceiptUrls} />
 
         <div className="flex items-center justify-between border-t border-ice pt-3">
           <span className="text-muted">ยอดเบิกรวม</span>
           <span className="text-[20px] font-bold text-navy">{fmt(totalRef.current)} ฿</span>
         </div>
-        <div className="flex gap-2">
-          <button className="btn btn-primary text-[13.5px] py-2 flex-1">ส่งขออนุมัติ</button>
-          <button className="btn btn-outline text-[13.5px] py-2">บันทึกร่าง</button>
-        </div>
-        <p className="text-[11px] text-muted/70 italic">{expensePolicy.note} (เบี้ยเลี้ยง/เพดานที่พักเป็นตัวเลขสมมุติ รอบริษัทกำหนดจริง — รองรับเพิ่มรถบริษัท+ระบบจองรถในอนาคต)</p>
+        {msg && (
+          <p className={`text-[12.5px] rounded-lg px-3 py-2 ${msg.ok ? "bg-[#2E9E5B]/10 text-[#2E9E5B]" : "bg-[#D94141]/10 text-[#D94141]"}`}>{msg.text}</p>
+        )}
+        <button onClick={submit} disabled={saving} className="btn btn-primary text-[13.5px] py-2 w-full disabled:opacity-60">
+          {saving ? "กำลังส่ง..." : "ส่งขออนุมัติ"}
+        </button>
+        <p className="text-[11px] text-muted/70 italic">{expensePolicy.note}</p>
       </div>
     </div>
   );
 }
 
-export default function ExpensesPage() {
-  const pending = expenseClaims.filter((c) => c.status === "รออนุมัติ");
-  const monthTotal = expenseClaims.reduce((a, c) => a + c.items.reduce((x, i) => x + i.amount, 0), 0);
+type DbClaim = {
+  id: number; emp_id: string; category: string; detail: string | null; ref_doc: string | null;
+  amount: number; receipt_url: string | null; status: string; approver_note: string | null;
+  approved_by: string | null; created_at: string;
+};
+
+function ExpensesBody() {
+  const { dept, empId } = useDept();
+  const canApprove = dept === "admin" || dept === "management";
+  const [claims, setClaims] = useState<DbClaim[]>([]);
+  const [empNames, setEmpNames] = useState<Record<string, string>>({});
+
+  const load = async () => {
+    if (!supabase) return;
+    const [c, e] = await Promise.all([
+      supabase.from("expense_claims").select("*").order("created_at", { ascending: false }).limit(50),
+      supabase.from("employees").select("id,name"),
+    ]);
+    setClaims((c.data as DbClaim[]) ?? []);
+    setEmpNames(Object.fromEntries(((e.data as { id: string; name: string }[]) ?? []).map((x) => [x.id, x.name])));
+  };
+  useEffect(() => { load(); }, []);
+
+  const decide = async (c: DbClaim, status: string) => {
+    if (!supabase) return;
+    await supabase.from("expense_claims").update({ status, approved_by: empId || null }).eq("id", c.id);
+    load();
+  };
+
+  const pending = claims.filter((c) => c.status === "รออนุมัติ");
+  const now = new Date();
+  const monthTotal = claims
+    .filter((c) => { const d = new Date(c.created_at); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear() && c.status !== "ตีกลับ"; })
+    .reduce((a, c) => a + Number(c.amount), 0);
+  const fmtDT = (iso: string) => new Date(iso).toLocaleDateString("th-TH", { day: "numeric", month: "short" });
 
   return (
-    <StaffShell title="เบิกค่าใช้จ่าย">
+    <>
       <div className="grid gap-4 grid-cols-2 min-[900px]:grid-cols-3 mb-5">
         <div className="card-white p-4 min-w-0"><p className="text-[12px] text-muted">ยอดเบิกเดือนนี้ (ทีม)</p><p className="text-[22px] font-bold text-navy">{fmt(monthTotal)} ฿</p></div>
         <div className="card-white p-4 min-w-0"><p className="text-[12px] text-muted">รออนุมัติ</p><p className="text-[22px] font-bold text-amber">{pending.length} รายการ</p></div>
@@ -573,40 +643,39 @@ export default function ExpensesPage() {
       </div>
 
       <div className="grid gap-5 min-[1040px]:grid-cols-[400px_1fr] items-start">
-        <ClaimForm />
+        <ClaimForm empId={empId} onSaved={load} />
 
         <div className="card-white overflow-hidden min-w-0">
-          <p className="px-4 min-[600px]:px-5 pt-4 pb-2 font-bold text-navy">รายการเบิกล่าสุด</p>
+          <p className="px-4 min-[600px]:px-5 pt-4 pb-2 font-bold text-navy">รายการเบิกล่าสุด <span className="text-sky text-[12.5px]">({claims.length})</span></p>
           <div className="divide-y divide-ice">
-            {expenseClaims.map((c) => {
-              const total = c.items.reduce((a, i) => a + i.amount, 0);
-              const m = catMeta(c.category);
+            {claims.map((c) => {
+              const m = catMeta(c.category as ExpenseCategoryKey) ?? expenseCategories.at(-1)!;
               return (
-                <div key={c.no} className="px-4 min-[600px]:px-5 py-3.5">
+                <div key={c.id} className="px-4 min-[600px]:px-5 py-3.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="min-w-0">
                       <p className="text-[13.5px] font-bold text-navy">
-                        <span className="text-sky">{c.no}</span> · {c.employee} <span className="text-muted font-normal">({c.dept})</span>
+                        <span className="text-sky">EXP-{String(c.id).padStart(3, "0")}</span> · {empNames[c.emp_id] ?? c.emp_id}
                       </p>
                       <p className="text-[12px] mt-0.5">
                         <span className="inline-block text-[10.5px] font-bold bg-ice text-navy rounded px-1.5 py-0.5 mr-1.5">{m.icon} {m.label}</span>
-                        <span className="text-muted">{c.purpose}</span>
+                        <span className="text-muted">{c.detail ?? "-"}</span>
                       </p>
                       <p className="text-[11.5px] text-muted/80 mt-0.5">
-                        อ้างอิง {c.ref} · {c.date}{c.route ? ` · ${c.route}` : ""}
-                        {c.receipts ? ` · 📷 ใบเสร็จ ${c.receipts} รูป` : ""}
+                        {c.ref_doc ? `อ้างอิง ${c.ref_doc} · ` : ""}{fmtDT(c.created_at)}
+                        {c.receipt_url && <> · <a href={c.receipt_url} target="_blank" rel="noreferrer" className="text-sky hover:underline">📷 ดูใบเสร็จ</a></>}
+                        {c.approved_by && c.status !== "รออนุมัติ" && ` · โดย ${empNames[c.approved_by] ?? c.approved_by}`}
                       </p>
-                      <p className="text-[11.5px] text-muted/70 mt-0.5">{c.items.map((i) => `${i.label} ${fmt(i.amount)}฿`).join(" · ")}</p>
                     </div>
                     <div className="text-right">
-                      <p className="font-bold text-navy">{fmt(total)} ฿</p>
+                      <p className="font-bold text-navy">{fmt(Number(c.amount))} ฿</p>
                       <span className={`inline-block mt-1 text-[10.5px] font-bold rounded px-2 py-0.5 ${
-                        c.status === "รออนุมัติ" ? "bg-amber/15 text-amber" : c.status === "ร่าง" ? "bg-ice text-muted" : "bg-ice text-brand"
+                        c.status === "รออนุมัติ" ? "bg-amber/15 text-amber" : c.status === "ตีกลับ" ? "bg-[#D94141]/10 text-[#D94141]" : "bg-[#2E9E5B]/15 text-[#2E9E5B]"
                       }`}>{c.status}</span>
-                      {c.status === "รออนุมัติ" && (
+                      {canApprove && c.status === "รออนุมัติ" && (
                         <div className="flex gap-1.5 mt-1.5 justify-end">
-                          <button className="text-[11px] font-bold text-white bg-brand rounded px-2 py-1">อนุมัติ</button>
-                          <button className="text-[11px] font-bold text-muted bg-ice rounded px-2 py-1">ตีกลับ</button>
+                          <button onClick={() => decide(c, "อนุมัติแล้ว")} className="text-[11px] font-bold text-white bg-brand rounded px-2 py-1 hover:bg-navy">อนุมัติ</button>
+                          <button onClick={() => decide(c, "ตีกลับ")} className="text-[11px] font-bold text-muted bg-ice rounded px-2 py-1 hover:bg-[#D94141]/10 hover:text-[#D94141]">ตีกลับ</button>
                         </div>
                       )}
                     </div>
@@ -614,12 +683,18 @@ export default function ExpensesPage() {
                 </div>
               );
             })}
+            {claims.length === 0 && <p className="px-5 py-8 text-center text-[12.5px] text-muted/70">ยังไม่มีรายการเบิก</p>}
           </div>
-          <p className="px-4 min-[600px]:px-5 py-3 text-[11.5px] text-muted/70 italic border-t border-ice">
-            ระบบจริง: ค้นหาสถานที่/ระยะทางจาก Google Maps API จริง, AI อ่านยอดจากรูปใบเสร็จอัตโนมัติ, รายการที่อนุมัติแล้วส่งเข้าโมดูลการเงิน/PEAK
-          </p>
         </div>
       </div>
+    </>
+  );
+}
+
+export default function ExpensesPage() {
+  return (
+    <StaffShell title="เบิกค่าใช้จ่าย">
+      <ExpensesBody />
     </StaffShell>
   );
 }

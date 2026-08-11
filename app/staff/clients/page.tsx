@@ -1,28 +1,86 @@
 "use client";
 
-// โมดูลสื่อสารลูกค้า — ดัดแปลงจาก client-portal ของ tomas-tech-pm
-// ลูกค้าแต่ละโปรเจกต์ได้ลิงก์ส่วนตัว: ดูสถานะงาน คุยกับทีม ส่งคำขอ อัปโหลดไฟล์
+// โมดูลสื่อสารลูกค้า — บทสนทนาจริงต่อลูกค้าแต่ละราย (บันทึกลงฐานข้อมูล)
+// ส่งข้อความในนามทีม + บันทึกข้อความฝั่งลูกค้า + AI ช่วยร่างคำตอบจริง
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import StaffShell, { useDept } from "@/components/staff/StaffShell";
 import { callCopilot } from "@/lib/copilot";
-import { clientLinks, clientThread, clientRequests } from "@/lib/staffData";
+import { supabase } from "@/lib/supabase";
+
+type DbCustomer = { id: number; name: string; contact_name: string | null; phone: string | null; email: string | null };
+type DbMsg = { id: number; customer_id: number; emp_id: string | null; from_client: boolean; body: string; created_at: string };
+
+const fmtDT = (iso: string) => new Date(iso).toLocaleString("th-TH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
 function ClientsBody() {
-  const [selected, setSelected] = useState(0);
-  const { access } = useDept();
+  const { access, empId } = useDept();
   const readOnly = access("clients") === "read";
+  const [customers, setCustomers] = useState<DbCustomer[]>([]);
+  const [empNames, setEmpNames] = useState<Record<string, string>>({});
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [messages, setMessages] = useState<DbMsg[]>([]);
+  const [lastMsgMap, setLastMsgMap] = useState<Record<number, string>>({});
   const [draft, setDraft] = useState("");
+  const [asClient, setAsClient] = useState(false);
   const [drafting, setDrafting] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  const load = useCallback(async () => {
+    if (!supabase) return;
+    const [c, e, lm] = await Promise.all([
+      supabase.from("customers").select("id,name,contact_name,phone,email").order("name"),
+      supabase.from("employees").select("id,name"),
+      supabase.from("client_messages").select("customer_id,created_at").order("created_at", { ascending: false }).limit(200),
+    ]);
+    const list = (c.data as DbCustomer[]) ?? [];
+    setCustomers(list);
+    setEmpNames(Object.fromEntries(((e.data as { id: string; name: string }[]) ?? []).map((x) => [x.id, x.name])));
+    const map: Record<number, string> = {};
+    for (const m of (lm.data as { customer_id: number; created_at: string }[]) ?? []) {
+      if (!map[m.customer_id]) map[m.customer_id] = m.created_at;
+    }
+    setLastMsgMap(map);
+    setSelectedId((prev) => (prev !== null && list.some((x) => x.id === prev) ? prev : list[0]?.id ?? null));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const loadThread = useCallback(async () => {
+    if (!supabase || selectedId === null) { setMessages([]); return; }
+    const { data } = await supabase.from("client_messages").select("*").eq("customer_id", selectedId).order("created_at", { ascending: true });
+    setMessages((data as DbMsg[]) ?? []);
+  }, [selectedId]);
+  useEffect(() => { loadThread(); }, [loadThread]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages.length]);
+
+  const selected = customers.find((c) => c.id === selectedId) ?? null;
+
+  const send = async () => {
+    if (!supabase || !selected || !draft.trim()) return;
+    await supabase.from("client_messages").insert({
+      customer_id: selected.id, emp_id: asClient ? null : (empId || null), from_client: asClient, body: draft.trim(),
+    });
+    setDraft(""); setAsClient(false);
+    loadThread(); load();
+  };
+
   const aiDraft = async () => {
+    if (!selected) return;
     setDrafting(true);
     try {
-      const lastMsgs = clientThread.slice(-4).map((t) => `${t.from}: ${t.text}`).join("\n");
-      const j = await callCopilot({ action: "draft_email", payload: `บริบท: ทีม CONSERTECH ตอบลูกค้าใน Client Portal ของโปรเจกต์ติดตั้ง AGV\nบทสนทนาล่าสุด:\n${lastMsgs}\n\nร่างคำตอบสั้นๆ สุภาพ เป็นภาษาไทย ตอบประเด็นล่าสุดของลูกค้า` });
+      const lastMsgs = messages.slice(-6).map((t) => `${t.from_client ? "ลูกค้า" : "ทีมเรา"}: ${t.body}`).join("\n");
+      const j = await callCopilot({
+        action: "draft_email",
+        payload: `บริบท: ทีม CONSERTECH ตอบลูกค้า "${selected.name}" (ผู้ติดต่อ: ${selected.contact_name ?? "-"})\nบทสนทนาล่าสุด:\n${lastMsgs || "(ยังไม่มีบทสนทนา — ร่างข้อความทักทายแนะนำติดตามงาน)"}\n\nร่างคำตอบสั้นๆ สุภาพ เป็นภาษาไทย ตอบประเด็นล่าสุดของลูกค้า`,
+      });
       setDraft(String(j.text ?? "").replace(/\n+/g, " ").trim());
     } catch (e) { setDraft("⚠ " + String(e)); }
     setDrafting(false);
   };
+
+  if (!supabase) {
+    return <p className="text-[13px] text-muted bg-ice/50 rounded-lg px-3 py-2 inline-block">⚠ ยังไม่ได้เชื่อมต่อฐานข้อมูล</p>;
+  }
 
   return (
     <>
@@ -33,89 +91,87 @@ function ClientsBody() {
       )}
 
       <div className="grid gap-5 min-[1040px]:grid-cols-[340px_1fr] items-start">
-        {/* รายชื่อลิงก์ลูกค้า */}
-        <div className="space-y-3">
-          <div className="card-white p-4">
-            <div className="flex items-center justify-between">
-              <p className="font-bold text-navy text-[14px]">ลิงก์ลูกค้า (Client Portal)</p>
-              {!readOnly && <button className="text-[12px] font-bold text-brand">＋ สร้างลิงก์</button>}
-            </div>
-            <div className="mt-3 space-y-2">
-              {clientLinks.map((c, i) => (
-                <button key={c.project} onClick={() => setSelected(i)}
-                  className={`w-full text-left rounded-xl border p-3 transition text-[12.5px] ${selected === i ? "border-brand bg-ice/40" : "border-ice hover:border-brand"}`}>
-                  <div className="flex justify-between items-start gap-2">
-                    <p className="font-bold text-navy leading-snug">{c.customer}</p>
-                    {c.unread > 0 && <span className="bg-amber text-navy text-[10.5px] font-bold rounded-full px-1.5">{c.unread}</span>}
-                  </div>
-                  <p className="text-muted mt-0.5">{c.project}</p>
-                  <p className="text-[11px] text-muted/70 mt-1">{c.contact} · เข้าดูล่าสุด {c.lastSeen}</p>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="card-white p-4">
-            <p className="font-bold text-navy text-[14px]">คำขอจากลูกค้า</p>
-            <div className="mt-2.5 space-y-2">
-              {clientRequests.map((r, i) => (
-                <div key={i} className="rounded-lg border border-ice p-2.5 text-[12px]">
-                  <p><span className="font-bold text-brand">{r.type}</span> — {r.from} <span className="text-muted/60">· {r.time}</span></p>
-                  <p className="text-muted mt-0.5">{r.detail}</p>
-                  <p className={`mt-1 font-semibold ${r.status === "รอตอบ" ? "text-amber" : "text-sky"}`}>{r.status}</p>
-                </div>
-              ))}
-            </div>
+        {/* รายชื่อลูกค้า (จาก CRM) */}
+        <div className="card-white p-4 min-w-0">
+          <p className="font-bold text-navy text-[14px]">ลูกค้าทั้งหมด <span className="text-sky text-[12px]">({customers.length})</span></p>
+          <p className="text-[11px] text-muted/70 mt-0.5">รายชื่อซิงก์จากโมดูล CRM อัตโนมัติ</p>
+          <div className="mt-3 space-y-2 max-h-[560px] overflow-y-auto pr-1">
+            {customers.map((c) => (
+              <button key={c.id} onClick={() => setSelectedId(c.id)}
+                className={`w-full text-left rounded-xl border p-3 transition text-[12.5px] ${selectedId === c.id ? "border-brand bg-ice/40" : "border-ice hover:border-brand"}`}>
+                <p className="font-bold text-navy leading-snug">{c.name}</p>
+                <p className="text-[11px] text-muted/70 mt-1">
+                  {c.contact_name ?? "ยังไม่มีผู้ติดต่อ"}
+                  {lastMsgMap[c.id] && ` · คุยล่าสุด ${fmtDT(lastMsgMap[c.id])}`}
+                </p>
+              </button>
+            ))}
+            {customers.length === 0 && <p className="text-[12.5px] text-muted/70">ยังไม่มีลูกค้า — เพิ่มได้ที่โมดูล CRM</p>}
           </div>
         </div>
 
         {/* บทสนทนา */}
-        <div className="card-white p-5">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ice pb-3">
-            <div>
-              <p className="font-bold text-navy">{clientLinks[selected].customer} — {clientLinks[selected].contact}</p>
-              <p className="text-[12px] text-muted">{clientLinks[selected].project}</p>
-            </div>
-            <div className="flex gap-2 text-[12px]">
-              <span className="bg-ice text-brand font-bold rounded px-2 py-1">ลูกค้าเห็น: สถานะงาน · Milestone · ไฟล์</span>
-            </div>
-          </div>
-
-          <div className="mt-4 space-y-3">
-            {clientThread.map((m, i) => (
-              <div key={i} className={`max-w-[85%] ${m.from === "staff" ? "ml-auto" : ""}`}>
-                <p className={`text-[11px] mb-1 ${m.from === "staff" ? "text-right text-sky" : "text-muted"}`}>{m.name} · {m.time}</p>
-                <div className={`rounded-2xl px-4 py-2.5 text-[13.5px] leading-relaxed ${
-                  m.from === "staff" ? "bg-brand text-white rounded-tr-sm" : "bg-ice text-ink rounded-tl-sm"
-                }`}>
-                  {m.text}
+        <div className="card-white p-5 min-w-0">
+          {selected ? (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ice pb-3">
+                <div>
+                  <p className="font-bold text-navy">{selected.name}{selected.contact_name && ` — ${selected.contact_name}`}</p>
+                  <p className="text-[12px] text-muted">
+                    {[selected.phone, selected.email].filter(Boolean).join(" · ") || "ยังไม่มีข้อมูลติดต่อ (เพิ่มได้ใน CRM)"}
+                  </p>
                 </div>
               </div>
-            ))}
-          </div>
 
-          {!readOnly && (
-            <div className="mt-4 border-t border-ice pt-3">
-              <div className="flex gap-2">
-                <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="พิมพ์ข้อความถึงลูกค้า..." className="flex-1 min-w-0 rounded-xl border border-ice px-4 py-2.5 text-[13.5px]" />
-                <button className="btn btn-primary text-[13px] py-2 px-4 shrink-0">ส่ง</button>
+              <div className="mt-4 space-y-3 max-h-[420px] overflow-y-auto pr-1">
+                {messages.map((m) => (
+                  <div key={m.id} className={`max-w-[85%] ${!m.from_client ? "ml-auto" : ""}`}>
+                    <p className={`text-[11px] mb-1 ${!m.from_client ? "text-right text-sky" : "text-muted"}`}>
+                      {m.from_client ? (selected.contact_name ?? "ลูกค้า") : (m.emp_id ? empNames[m.emp_id] ?? m.emp_id : "ทีมเรา")} · {fmtDT(m.created_at)}
+                    </p>
+                    <div className={`rounded-2xl px-4 py-2.5 text-[13.5px] leading-relaxed whitespace-pre-wrap ${
+                      !m.from_client ? "bg-brand text-white rounded-tr-sm" : "bg-ice text-ink rounded-tl-sm"
+                    }`}>
+                      {m.body}
+                    </div>
+                  </div>
+                ))}
+                {messages.length === 0 && (
+                  <p className="text-[13px] text-muted/70 text-center py-10">ยังไม่มีบทสนทนากับลูกค้ารายนี้ — เริ่มพิมพ์ด้านล่างได้เลย</p>
+                )}
+                <div ref={bottomRef} />
               </div>
-              <div className="flex flex-wrap gap-2 mt-2">
-                <button onClick={aiDraft} disabled={drafting}
-                  className="text-[11.5px] font-semibold bg-amber/15 text-amber rounded-lg px-2.5 py-1 disabled:opacity-60">
-                  {drafting ? "⏳ AI กำลังร่าง..." : "✨ ให้ AI ร่างคำตอบ"}
-                </button>
-                <button className="text-[11.5px] font-semibold bg-ice text-sky rounded-lg px-2.5 py-1">แนบไฟล์</button>
-                <button className="text-[11.5px] font-semibold bg-ice text-sky rounded-lg px-2.5 py-1">แนบสถานะ Milestone ล่าสุด</button>
-                <button className="text-[11.5px] font-semibold bg-ice text-sky rounded-lg px-2.5 py-1">แจ้งเตือนผ่าน Line/อีเมล</button>
-              </div>
-            </div>
+
+              {!readOnly && (
+                <div className="mt-4 border-t border-ice pt-3">
+                  <div className="flex gap-2">
+                    <input value={draft} onChange={(e) => setDraft(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") send(); }}
+                      placeholder={asClient ? "บันทึกข้อความที่ลูกค้าส่งมา (โทร/Line/อีเมล)..." : "พิมพ์ข้อความถึงลูกค้า..."}
+                      className={`flex-1 min-w-0 rounded-xl border px-4 py-2.5 text-[13.5px] ${asClient ? "border-amber/60 bg-amber/5" : "border-ice"}`} />
+                    <button onClick={send} disabled={!draft.trim()} className="btn btn-primary text-[13px] py-2 px-4 shrink-0 disabled:opacity-50">ส่ง</button>
+                  </div>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    <button onClick={aiDraft} disabled={drafting}
+                      className="text-[11.5px] font-semibold bg-amber/15 text-amber rounded-lg px-2.5 py-1 disabled:opacity-60">
+                      {drafting ? "⏳ AI กำลังร่าง..." : "✨ ให้ AI ร่างคำตอบ"} <span className="text-[9px] font-bold bg-brand/10 text-brand rounded px-1 py-0.5 align-middle">AI จริง</span>
+                    </button>
+                    <button onClick={() => setAsClient((v) => !v)}
+                      className={`text-[11.5px] font-semibold rounded-lg px-2.5 py-1 transition ${asClient ? "bg-amber text-navy" : "bg-ice text-sky hover:text-brand"}`}>
+                      {asClient ? "✓ กำลังบันทึกฝั่งลูกค้า" : "บันทึกข้อความจากลูกค้า"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <p className="mt-4 text-[11.5px] text-muted/70 italic">
+                ประวัติการคุยเก็บรวมที่เดียวต่อลูกค้า — ข้อความจากลูกค้า (โทร/Line/อีเมล) กด &ldquo;บันทึกข้อความจากลูกค้า&rdquo; เพื่อเก็บเข้าประวัติ
+                · เฟสถัดไป: ลิงก์ Client Portal ให้ลูกค้าเข้าดูสถานะงานเอง
+              </p>
+            </>
+          ) : (
+            <p className="text-[13px] text-muted/70 text-center py-16">เลือกลูกค้าจากรายชื่อด้านซ้าย</p>
           )}
-
-          <p className="mt-4 text-[11.5px] text-muted/70 italic">
-            ระบบจริง: ลูกค้าเข้าผ่านลิงก์เฉพาะโปรเจกต์ (ไม่ต้องสมัครสมาชิก) เห็นความคืบหน้า/เอกสารที่เราเลือกเปิดเผย
-            ทุกข้อความแจ้งเตือนทีมผ่าน Line — ลดการตามงานทางโทรศัพท์และรวมประวัติการคุยไว้ที่เดียว
-          </p>
         </div>
       </div>
     </>

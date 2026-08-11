@@ -7,15 +7,11 @@ import StaffShell, { useDept } from "@/components/staff/StaffShell";
 import { supabase } from "@/lib/supabase";
 import "leaflet/dist/leaflet.css";
 import {
-  leaveBalance, leaveRequests, attendanceLog, workSchedule, mapPlaces, roadKm,
+  attendanceLog, workSchedule, mapPlaces, roadKm,
   type AttendanceRecord,
 } from "@/lib/staffData";
 
-const types = [
-  { key: "annual", label: "ลาพักร้อน", ...leaveBalance.annual },
-  { key: "sick", label: "ลาป่วย", ...leaveBalance.sick },
-  { key: "personal", label: "ลากิจ", ...leaveBalance.personal },
-];
+const LEAVE_TYPES = ["ลาพักร้อน", "ลาป่วย", "ลากิจ"] as const;
 
 type Stamp = { time: string; dateLabel: string; coords: string | null; place: string; lat?: number | null; lng?: number | null };
 
@@ -480,6 +476,169 @@ function BackfillSection({ onApproved }: { onApproved: () => void }) {
   );
 }
 
+// ── การลา — โควตาจริงจากแอดมิน + ยื่นใบลาจริง + หัวหน้าอนุมัติ ──
+type DbLeave = { id: number; emp_id: string; type: string; date_from: string; date_to: string; reason: string | null; status: string; created_at: string };
+
+function LeaveSection() {
+  const { dept, empId } = useDept();
+  const canApprove = dept === "admin" || dept === "management";
+  const [quota, setQuota] = useState<{ annual: number; sick: number; personal: number }>({ annual: 0, sick: 0, personal: 0 });
+  const [requests, setRequests] = useState<DbLeave[]>([]);
+  const [empNames, setEmpNames] = useState<Record<string, string>>({});
+  const [type, setType] = useState<string>("ลาพักร้อน");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const load = useCallback(async () => {
+    if (!supabase) return;
+    const [lr, em, me] = await Promise.all([
+      supabase.from("leave_requests").select("*").order("created_at", { ascending: false }).limit(40),
+      supabase.from("employees").select("id,name"),
+      empId ? supabase.from("employees").select("leave_annual,leave_sick,leave_personal").eq("id", empId).single() : Promise.resolve({ data: null }),
+    ]);
+    setRequests((lr.data as DbLeave[]) ?? []);
+    setEmpNames(Object.fromEntries(((em.data as { id: string; name: string }[]) ?? []).map((x) => [x.id, x.name])));
+    const q = me.data as { leave_annual: number; leave_sick: number; leave_personal: number } | null;
+    if (q) setQuota({ annual: q.leave_annual ?? 0, sick: q.leave_sick ?? 0, personal: q.leave_personal ?? 0 });
+  }, [empId]);
+  useEffect(() => { load(); }, [load]);
+
+  const days = (a: string, b: string) => Math.max(1, Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86400000) + 1);
+  const usedDays = (t: string) =>
+    requests.filter((r) => r.emp_id === empId && r.type === t && r.status === "อนุมัติแล้ว")
+      .reduce((s, r) => s + days(r.date_from, r.date_to), 0);
+
+  const quotaOf = (t: string) => t === "ลาพักร้อน" ? quota.annual : t === "ลาป่วย" ? quota.sick : quota.personal;
+
+  const submit = async () => {
+    if (!supabase || !empId) { setMsg({ ok: false, text: "ยังไม่ได้เข้าสู่ระบบ" }); return; }
+    if (!from || !to) { setMsg({ ok: false, text: "เลือกวันที่ให้ครบ" }); return; }
+    if (to < from) { setMsg({ ok: false, text: "วันสิ้นสุดต้องไม่ก่อนวันเริ่ม" }); return; }
+    setSaving(true); setMsg(null);
+    const { error } = await supabase.from("leave_requests").insert({
+      emp_id: empId, type, date_from: from, date_to: to, reason: reason.trim() || null, status: "รออนุมัติ",
+    });
+    setSaving(false);
+    if (error) { setMsg({ ok: false, text: String(error.message) }); return; }
+    setMsg({ ok: true, text: `✅ ส่งใบลาแล้ว (${days(from, to)} วัน) — รอหัวหน้าอนุมัติ` });
+    setFrom(""); setTo(""); setReason("");
+    load();
+  };
+
+  const decide = async (r: DbLeave, status: string) => {
+    if (!supabase) return;
+    await supabase.from("leave_requests").update({ status }).eq("id", r.id);
+    load();
+  };
+
+  const fmtRange = (r: DbLeave) => {
+    const f = new Date(r.date_from + "T00:00:00").toLocaleDateString("th-TH", { day: "numeric", month: "short" });
+    const t = new Date(r.date_to + "T00:00:00").toLocaleDateString("th-TH", { day: "numeric", month: "short" });
+    return r.date_from === r.date_to ? `${f} (1 วัน)` : `${f} – ${t} (${days(r.date_from, r.date_to)} วัน)`;
+  };
+
+  return (
+    <>
+      <h2 className="text-[17px] font-bold text-navy mb-3">🌴 การลา</h2>
+      <div className="grid gap-4 grid-cols-3 mb-5">
+        {LEAVE_TYPES.map((t) => {
+          const total = quotaOf(t); const used = usedDays(t);
+          return (
+            <div key={t} className="card-white p-4 min-w-0">
+              <p className="text-[12.5px] text-muted">{t}</p>
+              <p className="text-[20px] font-bold text-navy mt-0.5">{Math.max(0, total - used)} <span className="text-[12px] font-semibold text-muted">/ {total} วัน</span></p>
+              <div className="mt-2 h-1.5 rounded-full bg-ice overflow-hidden">
+                <div className="h-full bg-brand rounded-full" style={{ width: total > 0 ? `${Math.min(100, (used / total) * 100)}%` : "0%" }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="grid gap-5 min-[1040px]:grid-cols-[360px_1fr] items-start">
+        <div className="card-white p-5 min-w-0">
+          <p className="font-bold text-navy text-[15px]">ขอลา</p>
+          <div className="mt-3 space-y-3 text-[13.5px]">
+            <div>
+              <label className="block font-semibold text-navy mb-1">ประเภท</label>
+              <select value={type} onChange={(e) => setType(e.target.value)} className="w-full rounded-lg border border-ice px-3 py-2 bg-white">
+                {LEAVE_TYPES.map((t) => <option key={t} value={t}>{t} (เหลือ {Math.max(0, quotaOf(t) - usedDays(t))} วัน)</option>)}
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block font-semibold text-navy mb-1">ตั้งแต่</label>
+                <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-full rounded-lg border border-ice px-3 py-2" />
+              </div>
+              <div>
+                <label className="block font-semibold text-navy mb-1">ถึง</label>
+                <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-full rounded-lg border border-ice px-3 py-2" />
+              </div>
+            </div>
+            {from && to && to >= from && (
+              <p className="text-[12px] text-sky bg-ice/50 rounded-lg px-3 py-1.5">รวม {days(from, to)} วัน</p>
+            )}
+            <div>
+              <label className="block font-semibold text-navy mb-1">เหตุผล</label>
+              <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} className="w-full rounded-lg border border-ice px-3 py-2" />
+            </div>
+            {msg && (
+              <p className={`text-[12.5px] rounded-lg px-3 py-2 ${msg.ok ? "bg-[#2E9E5B]/10 text-[#2E9E5B]" : "bg-[#D94141]/10 text-[#D94141]"}`}>{msg.text}</p>
+            )}
+            <button onClick={submit} disabled={saving} className="btn btn-primary w-full text-[13.5px] py-2 disabled:opacity-60">
+              {saving ? "กำลังส่ง..." : "ส่งขออนุมัติ"}
+            </button>
+            <p className="text-[11px] text-muted/70 italic">โควตาวันลาของแต่ละคนตั้งค่าโดยแอดมินที่หน้าจัดการผู้ใช้</p>
+          </div>
+        </div>
+
+        <div className="card-white overflow-hidden min-w-0">
+          <p className="px-5 pt-4 pb-2 font-bold text-navy">คำขอลาล่าสุดของทีม <span className="text-sky text-[12.5px]">({requests.length})</span></p>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-[13px]">
+              <thead>
+                <tr className="bg-ice/70 text-navy">
+                  {["เลขที่", "พนักงาน", "ประเภท", "ช่วงเวลา", "สถานะ"].map((h) => (
+                    <th key={h} className="text-left px-4 py-2.5 font-bold">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {requests.map((l, i) => (
+                  <tr key={l.id} className={i % 2 ? "bg-ice/30" : ""}>
+                    <td className="px-4 py-2.5 font-semibold text-sky">LV-{String(l.id).padStart(3, "0")}</td>
+                    <td className="px-4 py-2.5 text-navy">{empNames[l.emp_id] ?? l.emp_id}</td>
+                    <td className="px-4 py-2.5 text-muted">{l.type}</td>
+                    <td className="px-4 py-2.5 text-muted">{fmtRange(l)}</td>
+                    <td className="px-4 py-2.5">
+                      {canApprove && l.status === "รออนุมัติ" ? (
+                        <span className="flex gap-1.5">
+                          <button onClick={() => decide(l, "อนุมัติแล้ว")} className="text-[11px] font-bold text-white bg-brand rounded px-2 py-1 hover:bg-navy">อนุมัติ</button>
+                          <button onClick={() => decide(l, "ตีกลับ")} className="text-[11px] font-bold text-muted bg-ice rounded px-2 py-1 hover:bg-[#D94141]/10 hover:text-[#D94141]">ตีกลับ</button>
+                        </span>
+                      ) : (
+                        <span className={`text-[11px] font-bold rounded px-2 py-0.5 ${
+                          l.status === "รออนุมัติ" ? "bg-amber/15 text-amber" : l.status === "ตีกลับ" ? "bg-[#D94141]/10 text-[#D94141]" : "bg-[#2E9E5B]/15 text-[#2E9E5B]"
+                        }`}>{l.status}</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {requests.length === 0 && (
+                  <tr><td colSpan={5} className="px-4 py-6 text-center text-[12.5px] text-muted/70">ยังไม่มีคำขอลา</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function WorkInfoBody() {
   const [refreshKey, setRefreshKey] = useState(0);
   const bump = useCallback(() => setRefreshKey((k) => k + 1), []);
@@ -494,77 +653,8 @@ function WorkInfoBody() {
       {/* ── ยื่นลงเวลาย้อนหลัง + อนุมัติ ── */}
       <BackfillSection onApproved={bump} />
 
-      {/* ── การลา ── */}
-      <h2 className="text-[17px] font-bold text-navy mb-3">🌴 การลา</h2>
-      <div className="grid gap-4 grid-cols-3 mb-5">
-        {types.map((t) => (
-          <div key={t.key} className="card-white p-4 min-w-0">
-            <p className="text-[12.5px] text-muted">{t.label}</p>
-            <p className="text-[20px] font-bold text-navy mt-0.5">{t.total - t.used} <span className="text-[12px] font-semibold text-muted">/ {t.total} วัน</span></p>
-            <div className="mt-2 h-1.5 rounded-full bg-ice overflow-hidden">
-              <div className="h-full bg-brand rounded-full" style={{ width: `${(t.used / t.total) * 100}%` }} />
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid gap-5 min-[1040px]:grid-cols-[360px_1fr] items-start">
-        <div className="card-white p-5 min-w-0">
-          <p className="font-bold text-navy text-[15px]">ขอลา</p>
-          <div className="mt-3 space-y-3 text-[13.5px]">
-            <div>
-              <label className="block font-semibold text-navy mb-1">ประเภท</label>
-              <select className="w-full rounded-lg border border-ice px-3 py-2 bg-white">
-                {types.map((t) => <option key={t.key}>{t.label}</option>)}
-              </select>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="block font-semibold text-navy mb-1">ตั้งแต่</label>
-                <input type="date" className="w-full rounded-lg border border-ice px-3 py-2" />
-              </div>
-              <div>
-                <label className="block font-semibold text-navy mb-1">ถึง</label>
-                <input type="date" className="w-full rounded-lg border border-ice px-3 py-2" />
-              </div>
-            </div>
-            <div>
-              <label className="block font-semibold text-navy mb-1">เหตุผล</label>
-              <textarea rows={2} className="w-full rounded-lg border border-ice px-3 py-2" />
-            </div>
-            <button className="btn btn-primary w-full text-[13.5px] py-2">ส่งขออนุมัติ</button>
-            <p className="text-[11px] text-muted/70 italic">ระบบจริง: หัวหน้าอนุมัติในระบบ + ลงปฏิทินทีม (Google Calendar) อัตโนมัติ เพื่อไม่ให้ชนนัดติดตั้งหน้างาน — โควตาวันลาของแต่ละคนตั้งค่าโดยแอดมินที่หน้าจัดการผู้ใช้</p>
-          </div>
-        </div>
-
-        <div className="card-white overflow-hidden min-w-0">
-          <p className="px-5 pt-4 pb-2 font-bold text-navy">คำขอลาล่าสุดของทีม</p>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px] text-[13px]">
-              <thead>
-                <tr className="bg-ice/70 text-navy">
-                  {["เลขที่", "พนักงาน", "ประเภท", "ช่วงเวลา", "สถานะ"].map((h) => (
-                    <th key={h} className="text-left px-4 py-2.5 font-bold">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {leaveRequests.map((l, i) => (
-                  <tr key={l.no} className={i % 2 ? "bg-ice/30" : ""}>
-                    <td className="px-4 py-2.5 font-semibold text-sky">{l.no}</td>
-                    <td className="px-4 py-2.5 text-navy">{l.employee}</td>
-                    <td className="px-4 py-2.5 text-muted">{l.type}</td>
-                    <td className="px-4 py-2.5 text-muted">{l.range}</td>
-                    <td className="px-4 py-2.5">
-                      <span className={`text-[11px] font-bold rounded px-2 py-0.5 ${l.status === "รออนุมัติ" ? "bg-amber/15 text-amber" : "bg-ice text-brand"}`}>{l.status}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
+      {/* ── การลา (จริง) ── */}
+      <LeaveSection />
     </>
   );
 }

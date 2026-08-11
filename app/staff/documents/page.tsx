@@ -42,8 +42,9 @@ type DbProductLite = {
 const CO = {
   nameEn: "CONSERTECH CO., LTD.",
   nameTh: "บริษัท คันเซอร์เทคซ์ จำกัด",
-  addr: "72, 49 หมู่ที่ 3 ถ.เลี่ยงเมืองปากเกร็ด ต.บางตลาด อ.ปากเกร็ด จ.นนทบุรี 11120",
-  tel: "062-363-5395",
+  // ที่อยู่จดทะเบียนสำหรับออกเอกสาร (ตามใบเสนอราคาจริง — คนละที่กับออฟฟิศ)
+  addr: "41/69 หมู่ 6 บางตลาด ปากเกร็ด นนทบุรี 11120",
+  tel: "024949191, 0636424914",
   email: "sale01@cs-th.com",
   taxId: "0125568008051",
 };
@@ -381,7 +382,7 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
           <div>
             <p className="text-[11px] font-bold text-sky">เลขที่เอกสาร (รันอัตโนมัติเมื่อบันทึก)</p>
             <p className="font-bold text-navy text-[18px]">
-              {docNo ?? "QT-XXXX-XXX"}{" "}
+              {docNo ?? "QXXXXXXXXX"}{" "}
               <span className={`text-[10.5px] font-bold rounded px-1.5 py-0.5 align-middle ${statusBadge(status)}`}>{status}</span>
             </p>
           </div>
