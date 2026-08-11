@@ -13,7 +13,7 @@ type DbProject = {
   id: number; code: string; name: string; customer: string | null; deal_id: number | null;
   pm: string | null; status: string; progress: number; note: string | null; created_at: string;
 };
-type DbMilestone = { id: number; project_id: number; name: string; pct: number; done: boolean; invoice: string | null; sort: number; date_from: string | null; date_to: string | null };
+type DbMilestone = { id: number; project_id: number; name: string; pct: number; done: boolean; progress: number; invoice: string | null; sort: number; date_from: string | null; date_to: string | null };
 type DbAcceptance = { id: number; project_id: number; item: string; done: boolean; sort: number };
 type DbTicket = { id: number; no: string; project_id: number | null; site: string; issue: string; assignee: string | null; due: string | null; status: string; created_at: string };
 type EmpLite = { id: string; name: string };
@@ -59,13 +59,6 @@ function GanttSection({ projects, milestones }: { projects: DbProject[]; milesto
     cur.setMonth(cur.getMonth() + 1);
   }
 
-  const completion = (m: DbMilestone) => {
-    if (m.done) return 100;
-    const s = new Date(m.date_from!).getTime(), e = new Date(m.date_to!).getTime();
-    if (today <= s) return 0;
-    if (today >= e) return 95;
-    return Math.round(((today - s) / Math.max(1, e - s)) * 100);
-  };
 
   return (
     <div className="mt-5 card-white p-5 overflow-x-auto">
@@ -83,8 +76,8 @@ function GanttSection({ projects, milestones }: { projects: DbProject[]; milesto
           {dated.map((m) => {
             const s = ((new Date(m.date_from!).getTime() - min) / span) * 100;
             const w = Math.max(2.5, ((new Date(m.date_to!).getTime() - new Date(m.date_from!).getTime()) / span) * 100);
-            const pct = completion(m);
-            const state = m.done ? "done" : pct > 0 ? "doing" : "waiting";
+            const pct = m.done ? 100 : m.progress;
+            const state = m.done || pct >= 100 ? "done" : pct > 0 ? "doing" : "waiting";
             return (
               <div key={m.id} className="flex items-center text-[12px]">
                 <div className="w-[220px] shrink-0 pr-3">
@@ -290,10 +283,26 @@ function ProjectsBody() {
     load();
   };
 
-  // Milestones
+  // Milestones — % โปรเจกต์ = ผลรวมถ่วงน้ำหนัก (งวด% × ความคืบหน้างวด) อัตโนมัติ ให้ตัวเลขตรงกันทั้งระบบ
+  const syncProgress = async (projectId: number) => {
+    if (!supabase) return;
+    const { data } = await supabase.from("project_milestones").select("pct,progress").eq("project_id", projectId);
+    const sum = Math.min(100, Math.round(((data as { pct: number; progress: number }[]) ?? []).reduce((a, x) => a + x.pct * x.progress / 100, 0)));
+    await supabase.from("projects").update({ progress: sum }).eq("id", projectId);
+    load();
+  };
   const toggleMilestone = async (m: DbMilestone) => {
     if (!supabase || readOnly) return;
-    await supabase.from("project_milestones").update({ done: !m.done }).eq("id", m.id);
+    const done = !m.done;
+    await supabase.from("project_milestones").update({ done, progress: done ? 100 : 0 }).eq("id", m.id);
+    await syncProgress(m.project_id);
+    loadDetail();
+  };
+  const setMsProgress = async (m: DbMilestone, progress: number) => {
+    if (!supabase || readOnly) return;
+    const v = Math.max(0, Math.min(100, progress));
+    await supabase.from("project_milestones").update({ progress: v, done: v >= 100 }).eq("id", m.id);
+    await syncProgress(m.project_id);
     loadDetail();
   };
   const setInvoice = async (m: DbMilestone, invoice: string) => {
@@ -317,11 +326,8 @@ function ProjectsBody() {
   const delMilestone = async (m: DbMilestone) => {
     if (!supabase) return;
     await supabase.from("project_milestones").delete().eq("id", m.id);
+    await syncProgress(m.project_id);
     loadDetail();
-  };
-  const progressFromMilestones = () => {
-    const sum = milestones.filter((m) => m.done).reduce((a, m) => a + m.pct, 0);
-    patchProject({ progress: Math.max(0, Math.min(100, sum)) });
   };
 
   // Acceptance
@@ -420,14 +426,13 @@ function ProjectsBody() {
                   {emps.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
                 </select>
               </label>
-              <label className="flex items-center gap-2 flex-1 min-w-[220px]">ความคืบหน้า:
-                <input type="range" min={0} max={100} step={5} value={selected.progress}
-                  onChange={(e) => patchProject({ progress: +e.target.value })} className="flex-1 accent-[#15659E]" />
+              <span className="flex items-center gap-2 flex-1 min-w-[220px]">ความคืบหน้า:
+                <span className="flex-1 h-2 rounded-full bg-ice overflow-hidden">
+                  <span className="block h-full bg-brand rounded-full transition-all" style={{ width: `${selected.progress}%` }} />
+                </span>
                 <span className="font-bold text-brand w-10 text-right">{selected.progress}%</span>
-              </label>
-              <button onClick={progressFromMilestones} className="text-[11.5px] font-semibold text-sky hover:text-brand" title="รวม % ของ Milestone ที่เสร็จแล้ว">
-                ⟳ คำนวณจาก Milestone
-              </button>
+              </span>
+              <span className="text-[11px] text-muted/70">อัตโนมัติ = ผลรวม งวด% × ความคืบหน้าของแต่ละ Milestone</span>
               <button onClick={removeProject} className="text-[12px] font-semibold text-[#D94141]/70 hover:text-[#D94141] ml-auto">🗑 ลบ</button>
             </div>
           )}
@@ -452,6 +457,7 @@ function ProjectsBody() {
                           {m.date_from && <p className="text-[10.5px] text-muted/70">{m.date_from} → {m.date_to ?? "?"}</p>}
                         </>
                       ) : (
+                        <>
                         <div className="mt-1 flex flex-wrap gap-1.5 items-center">
                           <input defaultValue={m.invoice ?? ""} key={`inv${m.id}${m.invoice ?? ""}`} placeholder="เลขใบแจ้งหนี้"
                             onBlur={(e) => { if (e.target.value !== (m.invoice ?? "")) setInvoice(m, e.target.value); }}
@@ -462,6 +468,13 @@ function ProjectsBody() {
                           <input type="date" value={m.date_to ?? ""} onChange={(e) => setMsDates(m, "date_to", e.target.value)}
                             className="text-[10.5px] rounded border border-ice/70 px-1.5 py-1 text-muted" title="วันสิ้นสุด" />
                         </div>
+                        <div className="mt-1.5 flex items-center gap-2" title="ความคืบหน้าของงานในงวดนี้ — ลากปรับได้">
+                          <span className="text-[10.5px] text-muted shrink-0">งานคืบหน้า</span>
+                          <input type="range" min={0} max={100} step={5} value={m.progress}
+                            onChange={(e) => setMsProgress(m, +e.target.value)} className="flex-1 accent-[#15659E] h-1.5" />
+                          <span className={`text-[11px] font-bold w-9 text-right ${m.progress >= 100 ? "text-[#2E9E5B]" : "text-brand"}`}>{m.progress}%</span>
+                        </div>
+                        </>
                       )}
                     </div>
                     <span className="text-[12px] font-bold text-amber shrink-0">{m.pct}%</span>

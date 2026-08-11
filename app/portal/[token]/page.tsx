@@ -8,7 +8,7 @@ import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type DbProject = { id: number; code: string; name: string; customer: string | null; status: string; progress: number };
-type DbMilestone = { id: number; name: string; pct: number; done: boolean; sort: number; date_from: string | null; date_to: string | null };
+type DbMilestone = { id: number; name: string; pct: number; done: boolean; progress: number; sort: number; date_from: string | null; date_to: string | null };
 type DbAcceptance = { id: number; item: string; done: boolean; sort: number };
 type DbTicket = { id: number; no: string; site: string; issue: string; due: string | null; status: string };
 type DbMsg = { id: number; emp_id: string | null; from_client: boolean; kind: string; body: string; created_at: string };
@@ -48,8 +48,11 @@ function PortalGantt({ milestones }: { milestones: DbMilestone[] }) {
               </div>
               <div className="relative flex-1 h-6 rounded bg-ice/40">
                 {todayPct !== null && <span className="absolute top-0 bottom-0 border-l-2 border-amber z-10" style={{ left: `${todayPct}%` }} />}
-                <div className={`absolute top-0.5 bottom-0.5 rounded ${m.done ? "bg-sky/70" : "bg-brand"}`} style={{ left: `${s}%`, width: `${w}%` }}>
-                  <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white">{m.pct}%</span>
+                <div className={`absolute top-0.5 bottom-0.5 rounded ${m.done ? "bg-sky/70" : m.progress > 0 ? "bg-brand" : "bg-amber"}`} style={{ left: `${s}%`, width: `${w}%` }}>
+                  {!m.done && m.progress > 0 && m.progress < 100 && (
+                    <span className="absolute inset-y-0 left-0 bg-navy/25 rounded-l" style={{ width: `${m.progress}%` }} />
+                  )}
+                  <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white">{m.done ? "✓ 100%" : `${m.progress}%`}</span>
                 </div>
               </div>
             </div>
@@ -58,7 +61,8 @@ function PortalGantt({ milestones }: { milestones: DbMilestone[] }) {
       </div>
       <p className="mt-3 text-[11px] text-muted/70">
         <span className="inline-block w-2.5 h-2.5 bg-sky/70 rounded-sm mr-1" />เสร็จแล้ว
-        <span className="inline-block w-2.5 h-2.5 bg-brand rounded-sm ml-3 mr-1" />กำลังดำเนินการ
+        <span className="inline-block w-2.5 h-2.5 bg-brand rounded-sm ml-3 mr-1" />กำลังดำเนินการ (ตัวเลข = % งานที่ทำแล้ว)
+        <span className="inline-block w-2.5 h-2.5 bg-amber rounded-sm ml-3 mr-1" />รอเริ่ม
         <span className="inline-block border-l-2 border-amber h-3 ml-3 mr-1 align-middle" />วันนี้
       </p>
     </div>
@@ -94,7 +98,7 @@ export default function PortalPage() {
       const proj = p as DbProject;
       setProject(proj);
       const [m, a, t] = await Promise.all([
-        supabase.from("project_milestones").select("id,name,pct,done,sort,date_from,date_to").eq("project_id", proj.id).order("sort"),
+        supabase.from("project_milestones").select("id,name,pct,done,progress,sort,date_from,date_to").eq("project_id", proj.id).order("sort"),
         supabase.from("project_acceptance").select("id,item,done,sort").eq("project_id", proj.id).order("sort"),
         supabase.from("project_tickets").select("id,no,site,issue,due,status").eq("project_id", proj.id).order("no", { ascending: false }),
       ]);
@@ -184,7 +188,9 @@ export default function PortalPage() {
                   </span>
                   <div className="flex-1 min-w-0">
                     <p className={`font-semibold leading-snug ${m.done ? "text-navy" : "text-muted"}`}>{m.name}</p>
-                    {m.date_from && <p className="text-[10.5px] text-muted/70">{fmtD(m.date_from)} – {fmtD(m.date_to)}</p>}
+                    <p className="text-[10.5px] text-muted/70">
+                      {m.date_from && <>{fmtD(m.date_from)} – {fmtD(m.date_to)} · </>}งานคืบหน้า {m.done ? 100 : m.progress}%
+                    </p>
                   </div>
                 </div>
               ))}
