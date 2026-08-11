@@ -479,6 +479,8 @@ function CrmBody() {
   const [empNames, setEmpNames] = useState<Record<string, string>>({});
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [dragId, setDragId] = useState<number | null>(null);
+  const [dragOver, setDragOver] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!supabase) { setLoaded(true); return; }
@@ -499,6 +501,19 @@ function CrmBody() {
 
   const empName = (id: string | null) => (id ? empNames[id] ?? id : "-");
   const selected = deals.find((d) => d.id === selectedId) ?? null;
+
+  // ย้ายขั้นดีล (ใช้ทั้งลาก-วางและปุ่มชิปในรายละเอียด)
+  const moveStageDb = useCallback(async (id: number, stage: string) => {
+    if (!supabase) return;
+    const deal = deals.find((d) => d.id === id);
+    if (!deal || deal.stage === stage) return;
+    // อัปเดตทันทีในจอ (optimistic) แล้วค่อยบันทึก
+    setDeals((prev) => prev.map((d) => (d.id === id ? { ...d, stage } : d)));
+    await supabase.from("deals").update({ stage }).eq("id", id);
+    const label = STAGES.find((s) => s.key === stage)?.label ?? stage;
+    await supabase.from("deal_activities").insert({ deal_id: id, emp_id: empId || null, type: "ขั้นดีล", note: `ย้ายไปขั้น "${label}"` });
+    load();
+  }, [deals, empId, load]);
 
   const addLeadFromCard = async (f: Record<string, string | null>) => {
     if (!supabase) throw new Error("ยังไม่ได้เชื่อมต่อฐานข้อมูล");
@@ -534,21 +549,39 @@ function CrmBody() {
       {!readOnly && <AddDealForm customers={customers} empId={empId} onDone={load} />}
 
       {/* Pipeline */}
+      {!readOnly && <p className="text-[11.5px] text-muted/70 mb-1.5 px-1">💡 ลากการ์ดดีลไปวางในช่องอื่นเพื่อเปลี่ยนขั้นได้เลย</p>}
       <div className="overflow-x-auto pb-2 -mx-1 px-1">
         <div className="flex gap-3 min-w-[1050px]">
           {STAGES.map((st) => {
             const items = deals.filter((d) => d.stage === st.key);
+            const isOver = dragOver === st.key && dragId !== null;
             return (
-              <div key={st.key} className="flex-1 min-w-[145px]">
+              <div
+                key={st.key}
+                className={`flex-1 min-w-[145px] rounded-xl transition ${isOver ? "bg-brand/5 ring-2 ring-brand/40" : ""}`}
+                onDragOver={(e) => { if (!readOnly && dragId !== null) { e.preventDefault(); setDragOver(st.key); } }}
+                onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(null); }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  if (!readOnly && dragId !== null) moveStageDb(dragId, st.key);
+                  setDragId(null); setDragOver(null);
+                }}
+              >
                 <p className="text-[12px] font-bold text-navy px-1 mb-2">
                   {st.label} <span className="text-sky">({items.length})</span>
                 </p>
-                <div className="space-y-2">
+                <div className="space-y-2 min-h-16 pb-4">
                   {items.map((d) => (
                     <button
                       key={d.id}
                       onClick={() => setSelectedId(d.id)}
+                      draggable={!readOnly}
+                      onDragStart={(e) => { setDragId(d.id); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", String(d.id)); }}
+                      onDragEnd={() => { setDragId(null); setDragOver(null); }}
+                      title={readOnly ? undefined : "ลากไปวางในช่องอื่นเพื่อเปลี่ยนขั้นดีล"}
                       className={`w-full text-left rounded-xl border p-3 bg-white transition text-[12.5px] ${
+                        readOnly ? "" : "cursor-grab active:cursor-grabbing"
+                      } ${dragId === d.id ? "opacity-40" : ""} ${
                         selectedId === d.id ? "border-brand shadow-sm" : "border-ice hover:border-brand"
                       }`}
                     >
