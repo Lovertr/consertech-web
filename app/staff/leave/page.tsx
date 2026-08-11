@@ -2,10 +2,12 @@
 
 // โมดูลข้อมูลการทำงาน — ลงเวลาเข้า/เลิกงาน (Check In/Out + ตำแหน่ง GPS) + OT อัตโนมัติ + การลา
 
-import { useState } from "react";
-import StaffShell from "@/components/staff/StaffShell";
+import { useCallback, useEffect, useState } from "react";
+import StaffShell, { useDept } from "@/components/staff/StaffShell";
+import { supabase } from "@/lib/supabase";
 import {
   leaveBalance, leaveRequests, attendanceLog, workSchedule, mapPlaces, roadKm,
+  type AttendanceRecord,
 } from "@/lib/staffData";
 
 const types = [
@@ -42,33 +44,72 @@ function calcOt(checkOut: Date): string | null {
   return `${Math.floor(diffMin / 60)} ชม. ${diffMin % 60} น.`;
 }
 
-function TimeClock() {
+function TimeClock({ onSaved }: { onSaved?: () => void }) {
+  const { empId } = useDept();
   const [inStamp, setInStamp] = useState<Stamp | null>(null);
   const [outStamp, setOutStamp] = useState<Stamp | null>(null);
   const [ot, setOt] = useState<string | null>(null);
   const [locating, setLocating] = useState<"in" | "out" | null>(null);
-  const otEnabled = true; // เดโม: พนักงานคนนี้เปิดสิทธิ์ OT (แอดมินตั้งค่าได้ที่หน้าจัดการผู้ใช้)
+  const [openId, setOpenId] = useState<number | null>(null); // แถว attendance ที่ยังไม่ Check Out
+  const [otEnabled, setOtEnabled] = useState(true);
+
+  // โหลดสถานะจากฐานข้อมูล: กะที่ค้างอยู่ (เผื่อรีเฟรช/เปลี่ยนเครื่อง) + สิทธิ์ OT ของพนักงาน
+  useEffect(() => {
+    setInStamp(null); setOutStamp(null); setOt(null); setOpenId(null);
+    if (!supabase) return;
+    (async () => {
+      const { data: emp } = await supabase.from("employees").select("ot_enabled").eq("id", empId).single();
+      if (emp) setOtEnabled(emp.ot_enabled);
+      const { data } = await supabase
+        .from("attendance").select("*").eq("emp_id", empId).is("check_out", null)
+        .order("check_in", { ascending: false }).limit(1);
+      const row = data?.[0];
+      if (row) {
+        const d = new Date(row.check_in);
+        setInStamp({ time: fmtTime(d), dateLabel: fmtDate(d), coords: row.in_lat ? `${row.in_lat.toFixed(5)}, ${row.in_lng.toFixed(5)}` : null, place: row.in_place ?? "" });
+        setOpenId(row.id);
+      }
+    })();
+  }, [empId]);
 
   const stamp = (which: "in" | "out") => {
     setLocating(which);
-    const finish = (coords: string | null, place: string) => {
+    const finish = async (coords: string | null, place: string, lat: number | null, lng: number | null) => {
       const now = new Date();
       const s: Stamp = { time: fmtTime(now), dateLabel: fmtDate(now), coords, place };
-      if (which === "in") setInStamp(s);
-      else {
+      if (which === "in") {
+        setInStamp(s);
+        if (supabase) {
+          const { data } = await supabase.from("attendance")
+            .insert({ emp_id: empId, in_lat: lat, in_lng: lng, in_place: place })
+            .select("id").single();
+          if (data) setOpenId(data.id);
+        }
+      } else {
         setOutStamp(s);
-        if (otEnabled) setOt(calcOt(now));
+        const otText = otEnabled ? calcOt(now) : null;
+        setOt(otText);
+        if (supabase && openId != null) {
+          const [eh, em] = workSchedule.end.split(":").map(Number);
+          const end = new Date(now); end.setHours(eh, em, 0, 0);
+          const otMin = otEnabled ? Math.max(Math.floor((now.getTime() - end.getTime()) / 60000), 0) : 0;
+          await supabase.from("attendance").update({
+            check_out: now.toISOString(), out_lat: lat, out_lng: lng, out_place: place,
+            ot_minutes: otMin >= 30 ? otMin : 0,
+          }).eq("id", openId);
+          onSaved?.();
+        }
       }
       setLocating(null);
     };
     if (typeof navigator !== "undefined" && navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
-        (pos) => finish(`${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`, nearPlace(pos.coords.latitude, pos.coords.longitude)),
-        () => finish(`${mapPlaces[0].lat}, ${mapPlaces[0].lng} (เดโม)`, "สำนักงาน ปากเกร็ด — ไม่ได้รับอนุญาตตำแหน่ง ใช้พิกัดจำลอง"),
+        (pos) => finish(`${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`, nearPlace(pos.coords.latitude, pos.coords.longitude), pos.coords.latitude, pos.coords.longitude),
+        () => finish(`${mapPlaces[0].lat}, ${mapPlaces[0].lng} (เดโม)`, "สำนักงาน ปากเกร็ด — ไม่ได้รับอนุญาตตำแหน่ง ใช้พิกัดจำลอง", mapPlaces[0].lat, mapPlaces[0].lng),
         { timeout: 6000 }
       );
     } else {
-      finish(`${mapPlaces[0].lat}, ${mapPlaces[0].lng} (เดโม)`, "สำนักงาน ปากเกร็ด (พิกัดจำลอง)");
+      finish(`${mapPlaces[0].lat}, ${mapPlaces[0].lng} (เดโม)`, "สำนักงาน ปากเกร็ด (พิกัดจำลอง)", mapPlaces[0].lat, mapPlaces[0].lng);
     }
   };
 
@@ -140,16 +181,46 @@ function TimeClock() {
         </div>
       )}
       <p className="mt-2 text-[11px] text-muted/70 italic">
-        ระบบจริง: OT คิดอัตโนมัติเฉพาะพนักงานที่แอดมินเปิดสิทธิ์ OT — หัวหน้ากดอนุมัติก่อนส่งเข้าเงินเดือน, ตำแหน่ง GPS ใช้ยืนยันการทำงานที่ไซต์งาน
+        {supabase ? "🟢 บันทึกลงฐานข้อมูลจริง (Supabase) — รีเฟรช/เปลี่ยนเครื่องก็ยังจำกะที่ค้างอยู่" : "โหมดเดโม — ยังไม่เชื่อมฐานข้อมูล"} · OT คิดเฉพาะพนักงานที่เปิดสิทธิ์ (ตั้งที่หน้าจัดการผู้ใช้) · GPS ใช้ยืนยันการทำงานที่ไซต์งาน
       </p>
     </div>
   );
 }
 
-function AttendanceHistory() {
+function AttendanceHistory({ refreshKey }: { refreshKey: number }) {
+  const { empId } = useDept();
+  const [rows, setRows] = useState<AttendanceRecord[]>(attendanceLog);
+  const [fromDb, setFromDb] = useState(false);
+
+  useEffect(() => {
+    if (!supabase) return;
+    (async () => {
+      const { data } = await supabase
+        .from("attendance").select("*").eq("emp_id", empId)
+        .order("check_in", { ascending: false }).limit(7);
+      if (data) {
+        setRows(data.map((r) => {
+          const din = new Date(r.check_in);
+          const dout = r.check_out ? new Date(r.check_out) : null;
+          const mins = dout ? Math.floor((dout.getTime() - din.getTime()) / 60000) : null;
+          return {
+            date: din.toLocaleDateString("th-TH", { weekday: "short", day: "numeric", month: "short" }),
+            checkIn: fmtTime(din),
+            checkOut: dout ? fmtTime(dout) : null,
+            inPlace: r.in_place ?? "-",
+            outPlace: r.out_place ?? undefined,
+            hours: mins != null ? `${Math.floor(mins / 60)} ชม. ${mins % 60} น.` : undefined,
+            ot: r.ot_minutes ? `${Math.floor(r.ot_minutes / 60)} ชม. ${r.ot_minutes % 60} น.` : null,
+          };
+        }));
+        setFromDb(true);
+      }
+    })();
+  }, [empId, refreshKey]);
+
   return (
     <div className="card-white overflow-hidden min-w-0">
-      <p className="px-4 min-[600px]:px-5 pt-4 pb-2 font-bold text-navy">ประวัติการลงเวลา (สัปดาห์นี้)</p>
+      <p className="px-4 min-[600px]:px-5 pt-4 pb-2 font-bold text-navy">ประวัติการลงเวลา {fromDb ? "(จากฐานข้อมูลจริง)" : "(ตัวอย่าง)"}</p>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[640px] text-[12.5px]">
           <thead>
@@ -160,8 +231,8 @@ function AttendanceHistory() {
             </tr>
           </thead>
           <tbody>
-            {attendanceLog.map((a, i) => (
-              <tr key={a.date} className={i % 2 ? "bg-ice/30" : ""}>
+            {rows.map((a, i) => (
+              <tr key={i} className={i % 2 ? "bg-ice/30" : ""}>
                 <td className="px-4 py-2.5 font-semibold text-navy whitespace-nowrap">{a.date}</td>
                 <td className="px-4 py-2.5 text-brand font-semibold">{a.checkIn}</td>
                 <td className="px-4 py-2.5 text-muted">{a.checkOut ?? "—"}</td>
@@ -176,19 +247,21 @@ function AttendanceHistory() {
         </table>
       </div>
       <p className="px-4 min-[600px]:px-5 py-3 text-[11.5px] text-muted/70 italic border-t border-ice">
-        สรุป OT เดือนนี้: 2 ชม. 45 น. (อนุมัติแล้ว) — ระบบจริงส่งยอดเข้าโมดูลการเงิน/เงินเดือนอัตโนมัติ
+        {rows.length === 0 ? "ยังไม่มีประวัติ — กด Check In ครั้งแรกได้เลย · " : ""}ระบบจริงส่งยอด OT เข้าโมดูลการเงิน/เงินเดือนอัตโนมัติ
       </p>
     </div>
   );
 }
 
-export default function WorkInfoPage() {
+function WorkInfoBody() {
+  const [refreshKey, setRefreshKey] = useState(0);
+  const bump = useCallback(() => setRefreshKey((k) => k + 1), []);
   return (
-    <StaffShell title="ข้อมูลการทำงาน">
+    <>
       {/* ── ลงเวลา ── */}
       <div className="grid gap-5 min-[1040px]:grid-cols-[420px_1fr] items-start mb-6">
-        <TimeClock />
-        <AttendanceHistory />
+        <TimeClock onSaved={bump} />
+        <AttendanceHistory refreshKey={refreshKey} />
       </div>
 
       {/* ── การลา ── */}
@@ -262,6 +335,14 @@ export default function WorkInfoPage() {
           </div>
         </div>
       </div>
+    </>
+  );
+}
+
+export default function WorkInfoPage() {
+  return (
+    <StaffShell title="ข้อมูลการทำงาน">
+      <WorkInfoBody />
     </StaffShell>
   );
 }

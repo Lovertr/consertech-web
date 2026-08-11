@@ -10,6 +10,8 @@ import {
   type Employee, type PositionKey, type ModuleKey, type Access,
 } from "@/lib/staffData";
 import { departments } from "@/lib/data";
+import { supabase } from "@/lib/supabase";
+import type { Department } from "@/lib/data";
 
 const deptLabel = (k: string) => departments.find((d) => d.key === k)?.label ?? k;
 
@@ -23,13 +25,45 @@ function UsersBody() {
   const [accessOverride, setAccessOverride] = useState<AccessOverrides>({});
   const [saved, setSaved] = useState(false);
 
-  // โหลดสิทธิ์รายคนที่เคยบันทึกไว้
+  const [dbStatus, setDbStatus] = useState<"db" | "local" | "loading">("loading");
+
+  // โหลดพนักงาน + สิทธิ์รายคนจากฐานข้อมูลจริง (fallback: mock + localStorage)
   useEffect(() => {
-    try { setAccessOverride(JSON.parse(localStorage.getItem(OVERRIDES_KEY) ?? "{}")); } catch {}
+    (async () => {
+      if (supabase) {
+        const [{ data: emps }, { data: ovr }] = await Promise.all([
+          supabase.from("employees").select("*").order("id"),
+          supabase.from("access_overrides").select("emp_id,module,access"),
+        ]);
+        if (emps && emps.length) {
+          setList(emps.map((r) => ({
+            id: r.id, name: r.name, dept: r.dept as Department, position: r.position as PositionKey,
+            otEnabled: r.ot_enabled,
+            leaveQuota: { annual: r.leave_annual, sick: r.leave_sick, personal: r.leave_personal },
+          })));
+          const o: AccessOverrides = {};
+          for (const r of ovr ?? []) (o[r.emp_id] ??= {})[r.module as ModuleKey] = r.access as Access;
+          setAccessOverride(o);
+          setDbStatus("db");
+          return;
+        }
+      }
+      try { setAccessOverride(JSON.parse(localStorage.getItem(OVERRIDES_KEY) ?? "{}")); } catch {}
+      setDbStatus("local");
+    })();
   }, []);
 
-  // บันทึก → มีผลจริงทันทีทั้ง Portal (เมนู/สิทธิ์ของผู้ใช้คนนั้นเปลี่ยนตาม)
-  const saveAll = () => {
+  // บันทึก → เขียนฐานข้อมูลจริง + มีผลทันทีทั้ง Portal
+  const saveAll = async () => {
+    const cur = list.find((e) => e.id === selectedId)!;
+    if (supabase && dbStatus === "db") {
+      await supabase.from("employees").update({
+        position: cur.position, ot_enabled: cur.otEnabled,
+        leave_annual: cur.leaveQuota.annual, leave_sick: cur.leaveQuota.sick, leave_personal: cur.leaveQuota.personal,
+      }).eq("id", cur.id);
+      const rows = Object.entries(accessOverride[cur.id] ?? {}).map(([module, access]) => ({ emp_id: cur.id, module, access }));
+      if (rows.length) await supabase.from("access_overrides").upsert(rows);
+    }
     try {
       localStorage.setItem(OVERRIDES_KEY, JSON.stringify(accessOverride));
       window.dispatchEvent(new Event(PERMS_EVENT));
@@ -57,6 +91,10 @@ function UsersBody() {
           👁️ ดูอย่างเดียว — จัดการได้เฉพาะแอดมิน/ผู้บริหาร
         </p>
       )}
+
+      <p className={`mb-3 text-[11.5px] font-semibold rounded-lg px-3 py-1.5 inline-block ${dbStatus === "db" ? "bg-brand/10 text-brand" : "bg-ice text-muted"}`}>
+        {dbStatus === "db" ? "🟢 เชื่อมต่อฐานข้อมูลจริง (Supabase) — การแก้ไขถูกบันทึกถาวร" : dbStatus === "local" ? "⚪ โหมดเดโม — ยังไม่เชื่อมฐานข้อมูล บันทึกในเบราว์เซอร์" : "⏳ กำลังเชื่อมต่อ..."}
+      </p>
 
       <div className="grid gap-5 min-[1040px]:grid-cols-[300px_1fr] items-start">
         {/* รายชื่อพนักงาน */}

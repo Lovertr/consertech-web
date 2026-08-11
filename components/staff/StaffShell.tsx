@@ -8,6 +8,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, createContext, useContext, ReactNode } from "react";
 import { departments, type Department } from "@/lib/data";
 import { permissions, modulesMeta, employees, type ModuleKey, type Access } from "@/lib/staffData";
+import { supabase } from "@/lib/supabase";
 
 export type AccessOverrides = Record<string, Partial<Record<ModuleKey, Access>>>;
 export const OVERRIDES_KEY = "consertech-access-overrides";
@@ -45,7 +46,17 @@ export default function StaffShell({ children, title }: { children: ReactNode; t
   const router = useRouter();
 
   useEffect(() => {
-    const loadOverrides = () => {
+    const loadOverrides = async () => {
+      // ฐานข้อมูลจริงก่อน → fallback localStorage
+      if (supabase) {
+        const { data, error } = await supabase.from("access_overrides").select("emp_id,module,access");
+        if (!error && data) {
+          const o: AccessOverrides = {};
+          for (const r of data) (o[r.emp_id] ??= {})[r.module as ModuleKey] = r.access as Access;
+          setOverrides(o);
+          return;
+        }
+      }
       try { setOverrides(JSON.parse(localStorage.getItem(OVERRIDES_KEY) ?? "{}")); } catch {}
     };
     try {
