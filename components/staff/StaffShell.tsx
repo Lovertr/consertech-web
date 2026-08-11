@@ -156,7 +156,11 @@ export default function StaffShell({ children, title }: { children: ReactNode; t
           {/* Content */}
           <div className="min-w-0 max-w-full">
             {title && <h1 className="text-[22px] min-[900px]:text-[28px] font-bold mb-1">{title}</h1>}
-            <p className="text-[12px] text-muted mb-4">ข้อมูลจำลองสำหรับเดโม (Mockup) — ยังไม่เชื่อมต่อฐานข้อมูลจริง</p>
+            <p className="text-[12px] text-muted mb-4">
+              {supabase
+                ? "🟢 ลงเวลา · จัดการผู้ใช้ · สิทธิ์เข้าถึง — เชื่อมฐานข้อมูลจริงแล้ว | โมดูลอื่นยังเป็นข้อมูลจำลอง (ทยอยเชื่อมตาม Roadmap)"
+                : "ข้อมูลจำลองสำหรับเดโม (Mockup) — ยังไม่เชื่อมต่อฐานข้อมูลจริง"}
+            </p>
             {children}
           </div>
         </div>
