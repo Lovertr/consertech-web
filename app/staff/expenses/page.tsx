@@ -236,7 +236,35 @@ function MapPicker({ from, to, target, onPick, routeGo, routeBack }: {
 
 // ค่าเดินทาง: ต้นทาง → ปลายทาง เลือกขาไปอย่างเดียว/ไป-กลับ
 // ขาไป-ขากลับคำนวณแยกจาก "เส้นทางที่รถวิ่งจริง" (คนละเส้นทางได้ ระยะไม่เท่ากันได้) — ถ้ามีแวะหลายที่ ให้ตั้งเบิกแยกรายการ
-function TravelForm({ onTotal }: { onTotal: (n: number) => void }) {
+type TripRow = {
+  id: number; emp_id: string;
+  start_lat: number | null; start_lng: number | null; start_place: string | null; start_at: string | null;
+  end_lat: number | null; end_lng: number | null; end_place: string | null; end_at: string | null;
+  status: string;
+};
+
+const getPosition = () =>
+  new Promise<GeolocationPosition>((res, rej) =>
+    navigator.geolocation
+      ? navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true, timeout: 12000 })
+      : rej(new Error("เบราว์เซอร์ไม่รองรับ GPS")));
+
+async function placeNameFor(lat: number, lng: number): Promise<string> {
+  const known = nearestPlace(lat, lng);
+  if (known) return known;
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=th`,
+      { signal: AbortSignal.timeout(6000) });
+    if (r.ok) {
+      const j = await r.json();
+      const name = String(j.display_name ?? "").split(",").slice(0, 3).join(",").trim();
+      if (name) return name;
+    }
+  } catch { /* ใช้พิกัดแทน */ }
+  return `ตำแหน่ง ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+}
+
+function TravelForm({ onTotal, empId }: { onTotal: (n: number) => void; empId: string }) {
   const office = mapPlaces[0];
   const [from, setFrom] = useState<GeoPoint>({ name: office.name, lat: office.lat, lng: office.lng });
   const [to, setTo] = useState<GeoPoint>({ name: "", lat: null, lng: null });
@@ -250,6 +278,17 @@ function TravelForm({ onTotal }: { onTotal: (n: number) => void }) {
   const [calcMsg, setCalcMsg] = useState<string | null>(null);
   const [toll, setToll] = useState(0);
   const [parking, setParking] = useState(0);
+  // เช็คอินทริป (บันทึกลง DB — ปิดหน้าแล้วกลับมาต่อได้)
+  const [openTrip, setOpenTrip] = useState<TripRow | null>(null);
+  const [tripBusy, setTripBusy] = useState(false);
+  const [tripMsg, setTripMsg] = useState("");
+
+  useEffect(() => {
+    if (!supabase || !empId) return;
+    supabase.from("travel_checkins").select("*").eq("emp_id", empId).eq("status", "open")
+      .order("created_at", { ascending: false }).limit(1)
+      .then(({ data }) => setOpenTrip((data as TripRow[])?.[0] ?? null));
+  }, [empId]);
 
   const totalKm = kmGo + (trip === "round" ? kmBack : 0);
   const kmAmount = Math.round(totalKm * expensePolicy.kmRate);
@@ -271,12 +310,7 @@ function TravelForm({ onTotal }: { onTotal: (n: number) => void }) {
     setPoint(which, { name: known ?? `จุดบนแผนที่ (${lat.toFixed(4)}, ${lng.toFixed(4)})`, lat, lng });
   };
 
-  const calc = async () => {
-    if (from.lat == null || from.lng == null || to.lat == null || to.lng == null) {
-      setCalcMsg("ยังไม่ได้ระบุตำแหน่งครบ 2 จุด — พิมพ์เลือกจากรายการ หรือแตะบนแผนที่เพื่อปักหมุด");
-      return;
-    }
-    const a = { lat: from.lat, lng: from.lng }, b = { lat: to.lat, lng: to.lng };
+  const calcWith = async (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
     setCalcing(true);
     setCalcMsg("⏳ กำลังคำนวณจากเส้นทางขับจริง...");
     const go = await fetchRoute(a, b);
@@ -300,11 +334,105 @@ function TravelForm({ onTotal }: { onTotal: (n: number) => void }) {
     }
   };
 
+  const calc = async () => {
+    if (from.lat == null || from.lng == null || to.lat == null || to.lng == null) {
+      setCalcMsg("ยังไม่ได้ระบุตำแหน่งครบ 2 จุด — พิมพ์เลือกจากรายการ หรือแตะบนแผนที่เพื่อปักหมุด");
+      return;
+    }
+    await calcWith({ lat: from.lat, lng: from.lng }, { lat: to.lat, lng: to.lng });
+  };
+
+  // ── เช็คอินทริป ──
+  const checkinStart = async () => {
+    if (!supabase || !empId) { setTripMsg("⚠ ยังไม่ได้เข้าสู่ระบบ"); return; }
+    setTripBusy(true); setTripMsg("");
+    try {
+      const pos = await getPosition();
+      const { latitude: lat, longitude: lng } = pos.coords;
+      const place = await placeNameFor(lat, lng);
+      const { data, error } = await supabase.from("travel_checkins").insert({
+        emp_id: empId, start_lat: lat, start_lng: lng, start_place: place, start_at: new Date().toISOString(),
+      }).select("*").single();
+      if (error) throw error;
+      setOpenTrip(data as TripRow);
+      setPoint("from", { name: place, lat, lng });
+      setTripMsg("✅ เช็คอินจุดเริ่มต้นแล้ว — ปิดหน้านี้ได้เลย ถึงปลายทางค่อยกลับมากดเช็คอินจุดสิ้นสุด");
+    } catch (e) {
+      setTripMsg("⚠ อ่านตำแหน่งไม่สำเร็จ: " + String((e as Error).message ?? e));
+    } finally {
+      setTripBusy(false);
+    }
+  };
+
+  const checkinEnd = async () => {
+    if (!supabase || !openTrip) return;
+    setTripBusy(true); setTripMsg("");
+    try {
+      const pos = await getPosition();
+      const { latitude: lat, longitude: lng } = pos.coords;
+      const place = await placeNameFor(lat, lng);
+      await supabase.from("travel_checkins").update({
+        end_lat: lat, end_lng: lng, end_place: place, end_at: new Date().toISOString(), status: "done",
+      }).eq("id", openTrip.id);
+      // เติมจุดเริ่ม/สิ้นสุดจากทริปที่เช็คอินไว้ แล้วคำนวณระยะทางให้เลย
+      const a = { lat: openTrip.start_lat!, lng: openTrip.start_lng! };
+      setFrom({ name: openTrip.start_place ?? "จุดเริ่มต้น", lat: a.lat, lng: a.lng });
+      setTo({ name: place, lat, lng });
+      setOpenTrip(null);
+      setTripMsg(`✅ ถึงปลายทางแล้ว (${place}) — คำนวณระยะทางจากเส้นทางขับจริงให้ด้านล่าง`);
+      await calcWith(a, { lat, lng });
+    } catch (e) {
+      setTripMsg("⚠ อ่านตำแหน่งไม่สำเร็จ: " + String((e as Error).message ?? e));
+    } finally {
+      setTripBusy(false);
+    }
+  };
+
+  const cancelTrip = async () => {
+    if (!supabase || !openTrip) return;
+    if (!confirm("ยกเลิกทริปที่เช็คอินไว้?")) return;
+    await supabase.from("travel_checkins").update({ status: "cancelled" }).eq("id", openTrip.id);
+    setOpenTrip(null); setTripMsg("");
+  };
+
+  const tripTime = (iso: string | null) =>
+    iso ? new Date(iso).toLocaleString("th-TH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+
   const coordLabel = (pnt: GeoPoint) =>
     pnt.lat != null && pnt.lng != null ? `📍 ${pnt.lat.toFixed(4)}, ${pnt.lng.toFixed(4)}` : "— ยังไม่ระบุตำแหน่ง (พิมพ์เลือก หรือแตะบนแผนที่)";
 
   return (
     <div className="space-y-3">
+      {/* เช็คอินทริปด้วย GPS — บันทึกลงฐานข้อมูล ปิดหน้าแล้วกลับมาต่อได้ */}
+      <div className={`rounded-xl border p-3.5 text-[12.5px] ${openTrip ? "border-amber/60 bg-amber/5" : "border-brand/30 bg-ice/30"}`}>
+        {openTrip ? (
+          <>
+            <p className="font-bold text-navy">🚗 ทริปกำลังเดินทาง (เช็คอินไว้แล้ว)</p>
+            <p className="text-muted mt-1">
+              📍 เริ่มต้น: <strong className="text-ink">{openTrip.start_place}</strong> · {tripTime(openTrip.start_at)}
+            </p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button type="button" onClick={checkinEnd} disabled={tripBusy}
+                className="btn btn-primary text-[13px] py-2 px-3.5 disabled:opacity-60">
+                {tripBusy ? "⏳ กำลังอ่านตำแหน่ง..." : "📍 ถึงแล้ว — เช็คอินจุดสิ้นสุด"}
+              </button>
+              <button type="button" onClick={cancelTrip} disabled={tripBusy}
+                className="text-[12px] font-semibold text-muted hover:text-[#D94141] px-2">ยกเลิกทริป</button>
+            </div>
+          </>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button type="button" onClick={checkinStart} disabled={tripBusy}
+              className="btn btn-outline text-[13px] py-2 px-3.5 disabled:opacity-60">
+              {tripBusy ? "⏳ กำลังอ่านตำแหน่ง..." : "📍 เช็คอินจุดเริ่มต้น (ตำแหน่งปัจจุบัน)"}
+            </button>
+            <p className="text-[11.5px] text-muted flex-1 min-w-[200px]">
+              กดตอนออกเดินทาง ระบบบันทึกไว้ในฐานข้อมูล — <strong>ปิดหน้า/ปิดมือถือได้</strong> ถึงปลายทางค่อยเปิดมากดเช็คอินอีกครั้ง ระบบจะคำนวณระยะทางให้เอง · หรือพิมพ์/ปักหมุดเองด้านล่างก็ได้
+            </p>
+          </div>
+        )}
+        {tripMsg && <p className={`mt-2 text-[12px] font-semibold ${tripMsg.startsWith("✅") ? "text-[#2E9E5B]" : "text-[#D94141]"}`}>{tripMsg}</p>}
+      </div>
       <div>
         <label className="block font-semibold text-navy mb-1 text-[13.5px]">
           จุดเริ่มต้น
@@ -572,7 +700,7 @@ function ClaimForm({ empId, onSaved }: { empId: string; onSaved: () => void }) {
         </div>
         <RefPicker onChange={setRefDoc} />
 
-        {cat === "travel" && <TravelForm onTotal={setTotal} />}
+        {cat === "travel" && <TravelForm onTotal={setTotal} empId={empId} />}
         {cat === "lodging" && <LodgingForm onTotal={setTotal} />}
         {cat === "entertain" && <EntertainForm onTotal={setTotal} />}
         {cat === "supplies" && <SimpleAmountForm placeholder="รายการวัสดุ/อุปกรณ์ที่ซื้อ + ร้านค้า" onTotal={setTotal} />}
