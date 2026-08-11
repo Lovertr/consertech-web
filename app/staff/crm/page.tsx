@@ -1065,19 +1065,221 @@ function CustomersTab() {
   );
 }
 
+// ── ✨ AI ช่วยขาย — โค้ชเตรียมเข้าพบ (แชท) + ร่าง Email Marketing ──
+const EMAIL_TYPES = [
+  "แนะนำบริษัท + ขอเข้าพบ (ครั้งแรก)",
+  "Follow-up ใบเสนอราคา",
+  "ขอบคุณหลังเข้าพบ / ประชุม",
+  "นัดหมาย Site Survey / เดโม",
+  "ฟื้นความสัมพันธ์ลูกค้าเงียบหาย",
+  "แจ้งข่าวสาร / โปรโมชั่นสินค้า",
+] as const;
+
+function SalesAiTab() {
+  const [customers, setCustomers] = useState<{ id: number; name: string; industry: string | null; province: string | null; note: string | null }[]>([]);
+  const [contacts, setContacts] = useState<{ customer_id: number; name: string; position: string | null; email: string | null }[]>([]);
+  const [aiDeals, setAiDeals] = useState<DbDeal[]>([]);
+  const [acts, setActs] = useState<DbActivity[]>([]);
+  // แชทโค้ช
+  const [custText, setCustText] = useState("");
+  const [chat, setChat] = useState<{ role: "user" | "ai"; text: string }[]>([]);
+  const [q, setQ] = useState("");
+  const [chatBusy, setChatBusy] = useState(false);
+  // อีเมล
+  const [emCustText, setEmCustText] = useState("");
+  const [emType, setEmType] = useState<string>(EMAIL_TYPES[0]);
+  const [emLang, setEmLang] = useState<"th" | "en">("th");
+  const [emExtra, setEmExtra] = useState("");
+  const [emResult, setEmResult] = useState("");
+  const [emBusy, setEmBusy] = useState(false);
+  const [emErr, setEmErr] = useState("");
+
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("customers").select("id,name,industry,province,note").order("name")
+      .then(({ data }) => setCustomers((data as typeof customers) ?? []));
+    supabase.from("customer_contacts").select("customer_id,name,position,email")
+      .then(({ data }) => setContacts((data as typeof contacts) ?? []));
+    supabase.from("deals").select("*").order("created_at", { ascending: false })
+      .then(({ data }) => setAiDeals((data as DbDeal[]) ?? []));
+    supabase.from("deal_activities").select("*").order("created_at", { ascending: false }).limit(200)
+      .then(({ data }) => setActs((data as DbActivity[]) ?? []));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // สร้างบริบทลูกค้าจากข้อมูลจริงใน CRM
+  const contextFor = (name: string): string => {
+    const c = customers.find((x) => x.name === name);
+    if (!c) return "";
+    const cts = contacts.filter((x) => x.customer_id === c.id);
+    const ds = aiDeals.filter((d) => d.customer_id === c.id || d.customer_name === c.name);
+    const dealIds = ds.map((d) => d.id);
+    const as_ = acts.filter((a) => dealIds.includes(a.deal_id)).slice(0, 12);
+    return [
+      `ข้อมูลลูกค้า (จาก CRM จริง):`,
+      `- บริษัท: ${c.name} | อุตสาหกรรม: ${c.industry ?? "-"} | จังหวัด: ${c.province ?? "-"}${c.note ? ` | โน้ต: ${c.note}` : ""}`,
+      cts.length ? `- ผู้ติดต่อ: ${cts.map((x) => `${x.name}${x.position ? ` (${x.position})` : ""}`).join(", ")}` : "- ยังไม่มีผู้ติดต่อในระบบ",
+      ds.length ? `- ดีล: ${ds.map((d) => `${dealCode(d.id)} ${d.solution ?? "ยังไม่ระบุ"} [ขั้น ${STAGES.find((s) => s.key === d.stage)?.label ?? d.stage}, มูลค่า${d.value_level}${d.lead_score !== null ? `, Lead Score ${d.lead_score}` : ""}]`).join(" / ")}` : "- ยังไม่มีดีล",
+      as_.length ? `- กิจกรรมล่าสุด: ${as_.map((a) => `${fmtD(a.created_at)} ${a.type}: ${a.note}`).join(" | ")}` : "",
+    ].filter(Boolean).join("\n");
+  };
+
+  const ask = async () => {
+    if (!q.trim() || chatBusy) return;
+    const question = q.trim();
+    setQ("");
+    setChat((c) => [...c, { role: "user", text: question }]);
+    setChatBusy(true);
+    try {
+      const history = chat.slice(-8).map((m) => `${m.role === "user" ? "พนักงานขาย" : "AI โค้ช"}: ${m.text}`).join("\n");
+      const ctx = custText ? contextFor(custText) : "";
+      const j = await callCopilot({
+        action: "ask",
+        payload: [
+          "คุณคือ AI โค้ชฝ่ายขายของ CONSERTECH (ผู้ขายระบบ AGV/AMR, FMS และอุปกรณ์เซนเซอร์อุตสาหกรรม เช่น LiDAR, Safety Scanner) ช่วยพนักงานขายเตรียมตัว วางกลยุทธ์ ตอบข้อโต้แย้ง และปิดการขาย ตอบกระชับ ใช้ได้จริง เป็นภาษาไทย",
+          ctx,
+          history ? `บทสนทนาก่อนหน้า:\n${history}` : "",
+          `คำถามล่าสุดจากพนักงานขาย: ${question}`,
+        ].filter(Boolean).join("\n\n").slice(0, 13500),
+      });
+      setChat((c) => [...c, { role: "ai", text: String(j.text ?? "") }]);
+    } catch (e) {
+      setChat((c) => [...c, { role: "ai", text: "⚠ " + String(e) }]);
+    } finally {
+      setChatBusy(false);
+    }
+  };
+
+  const draftEmail = async () => {
+    setEmBusy(true); setEmErr(""); setEmResult("");
+    try {
+      const ctx = emCustText ? contextFor(emCustText) : "";
+      const j = await callCopilot({
+        action: "ask",
+        payload: [
+          `ช่วยร่างอีเมลประเภท "${emType}" สำหรับพนักงานขายของ CONSERTECH (ผู้ขายระบบ AGV/AMR, FMS และอุปกรณ์เซนเซอร์อุตสาหกรรม โทร 062-363-5395, sale01@cs-th.com)`,
+          emLang === "th" ? "เขียนเป็นภาษาไทย สุภาพแบบธุรกิจไทย" : "Write the email in professional business English.",
+          ctx || "ยังไม่ได้เลือกลูกค้า — ร่างแบบทั่วไปโดยเว้นช่อง [ชื่อลูกค้า] ให้เติม",
+          emExtra ? `คำสั่งเพิ่มเติมจากพนักงาน: ${emExtra}` : "",
+          "รูปแบบคำตอบ:\nSubject: (หัวข้ออีเมล)\n\n(เนื้อหาอีเมลเต็ม พร้อมลงท้าย)\n\n---\n💡 คำแนะนำ: (เคล็ดลับ 2-3 ข้อ เช่น จังหวะเวลาส่ง สิ่งที่ควร follow-up ต่อ ข้อควรระวัง — เขียนเป็นภาษาไทยเสมอ)",
+        ].filter(Boolean).join("\n\n").slice(0, 13500),
+      });
+      setEmResult(String(j.text ?? ""));
+    } catch (e) {
+      setEmErr(String(e));
+    } finally {
+      setEmBusy(false);
+    }
+  };
+
+  return (
+    <div className="grid gap-5 min-[1100px]:grid-cols-2 items-start">
+      {/* AI โค้ชเตรียมเข้าพบ (แชท) */}
+      <div className="card-white p-5 min-w-0">
+        <p className="font-bold text-navy text-[15px]">💬 AI โค้ชฝ่ายขาย <span className="text-[10px] font-bold bg-brand/10 text-brand rounded px-1.5 py-0.5 align-middle">AI จริง</span></p>
+        <p className="text-[12px] text-muted mt-0.5">ถามอะไรก็ได้ เช่น เตรียมตัวก่อนเข้าพบ วิธีตอบข้อโต้แย้ง กลยุทธ์ปิดดีล — เลือกลูกค้าแล้ว AI จะใช้ข้อมูลจริงจาก CRM ประกอบ</p>
+        <div className="mt-2.5">
+          <input list="ai-customers" value={custText} onChange={(e) => setCustText(e.target.value)}
+            placeholder="🔍 เลือกลูกค้า (พิมพ์ค้นหา — ไม่บังคับ)"
+            className={`w-full rounded-lg border px-3 py-2 text-[12.5px] ${custText && customers.some((c) => c.name === custText) ? "border-brand/50 bg-ice/30" : "border-ice"}`} />
+          <datalist id="ai-customers">{customers.map((c) => <option key={c.id} value={c.name} />)}</datalist>
+          {custText && customers.some((c) => c.name === custText) && (
+            <p className="text-[10.5px] text-brand mt-0.5">✓ AI เห็นข้อมูล {custText}: ผู้ติดต่อ ดีล และกิจกรรมล่าสุดทั้งหมด</p>
+          )}
+        </div>
+        <div className="mt-3 space-y-2.5 max-h-[380px] overflow-y-auto pr-1 rounded-xl bg-ice/20 p-3">
+          {chat.map((m, i) => (
+            <div key={i} className={`max-w-[90%] ${m.role === "user" ? "ml-auto" : ""}`}>
+              <div className={`rounded-2xl px-3.5 py-2 text-[13px] leading-relaxed whitespace-pre-wrap ${
+                m.role === "user" ? "bg-brand text-white rounded-tr-sm" : "bg-white border border-ice text-ink rounded-tl-sm"
+              }`}>
+                {m.text}
+              </div>
+            </div>
+          ))}
+          {chatBusy && <p className="text-[12.5px] text-muted">✨ AI กำลังคิด...</p>}
+          {chat.length === 0 && !chatBusy && (
+            <div className="text-[12px] text-muted/80 space-y-1.5">
+              <p className="font-semibold text-muted">ลองถามเช่น:</p>
+              {["พรุ่งนี้จะเข้าพบลูกค้ารายนี้ครั้งแรก ควรเตรียมอะไรบ้าง?", "ลูกค้าบอกว่าราคาแพงกว่าเจ้าอื่น ตอบยังไงดี?", "ควรถามอะไรบ้างตอน Site Survey?", "ช่วยสรุปจุดแข็งของ AGV เราเทียบกับแรงงานคน"].map((s) => (
+                <button key={s} onClick={() => setQ(s)} className="block w-full text-left rounded-lg border border-dashed border-ice px-2.5 py-1.5 hover:border-brand hover:text-brand transition">{s}</button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="mt-2.5 flex gap-2">
+          <input value={q} onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") ask(); }}
+            placeholder="พิมพ์คำถามถึง AI โค้ช..." disabled={chatBusy}
+            className="flex-1 min-w-0 rounded-xl border border-ice px-3.5 py-2.5 text-[13px]" />
+          <button onClick={ask} disabled={chatBusy || !q.trim()} className="btn btn-primary text-[13px] py-2 px-4 shrink-0 disabled:opacity-50">ถาม</button>
+        </div>
+        {chat.length > 0 && (
+          <button onClick={() => setChat([])} className="mt-1.5 text-[11.5px] text-muted/70 hover:text-navy">🗑 ล้างบทสนทนา</button>
+        )}
+      </div>
+
+      {/* AI Email Marketing */}
+      <div className="card-white p-5 min-w-0">
+        <p className="font-bold text-navy text-[15px]">✉️ AI ร่าง Email <span className="text-[10px] font-bold bg-brand/10 text-brand rounded px-1.5 py-0.5 align-middle">AI จริง</span></p>
+        <p className="text-[12px] text-muted mt-0.5">เลือกประเภทอีเมล + ลูกค้า + ภาษา แล้ว AI ร่างให้พร้อมคำแนะนำ</p>
+        <div className="mt-3 space-y-2.5">
+          <div className="flex flex-wrap gap-1.5">
+            {EMAIL_TYPES.map((t) => (
+              <button key={t} onClick={() => setEmType(t)}
+                className={`text-[11.5px] font-semibold rounded-lg px-2.5 py-1.5 border transition ${emType === t ? "bg-brand text-white border-brand" : "bg-white border-ice text-muted hover:border-brand"}`}>
+                {t}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <input list="ai-customers" value={emCustText} onChange={(e) => setEmCustText(e.target.value)}
+              placeholder="🔍 เลือกลูกค้า (พิมพ์ค้นหา — ไม่บังคับ)"
+              className="flex-1 min-w-[200px] rounded-lg border border-ice px-3 py-2 text-[12.5px]" />
+            <div className="flex gap-1 bg-ice rounded-lg p-0.5">
+              {([["th", "🇹🇭 ไทย"], ["en", "🇬🇧 English"]] as const).map(([k, label]) => (
+                <button key={k} onClick={() => setEmLang(k)}
+                  className={`text-[12px] font-bold rounded-md px-2.5 py-1.5 transition ${emLang === k ? "bg-white text-navy shadow-sm" : "text-muted"}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <input value={emExtra} onChange={(e) => setEmExtra(e.target.value)}
+            placeholder="คำสั่งเพิ่มเติม (ไม่บังคับ) เช่น เน้นเรื่องลดต้นทุนแรงงาน / แนบว่าจะโทรตามวันศุกร์"
+            className="w-full rounded-lg border border-ice px-3 py-2 text-[12.5px]" />
+          <button onClick={draftEmail} disabled={emBusy} className="btn btn-amber w-full text-[13.5px] py-2.5 disabled:opacity-60">
+            {emBusy ? "✨ AI กำลังร่างอีเมล..." : "✨ ให้ AI ร่างอีเมล + คำแนะนำ"}
+          </button>
+        </div>
+        {emErr && <p className="mt-2 text-[12.5px] text-[#D94141] bg-[#D94141]/10 rounded-lg px-3 py-2">⚠ {emErr}</p>}
+        {emResult && (
+          <div className="mt-3">
+            <div className="rounded-xl border border-ice bg-white p-3.5 text-[13px] leading-relaxed whitespace-pre-wrap max-h-[420px] overflow-y-auto">{emResult}</div>
+            <div className="mt-2 flex gap-2">
+              <button onClick={() => navigator.clipboard?.writeText(emResult)} className="btn btn-outline text-[12.5px] py-1.5 px-3">📋 คัดลอก</button>
+              <button onClick={draftEmail} disabled={emBusy} className="text-[12px] font-semibold text-sky hover:text-brand px-2 disabled:opacity-50">↻ ร่างใหม่อีกแบบ</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function CrmPage() {
-  const [tab, setTab] = useState<"pipeline" | "customers">("pipeline");
+  const [tab, setTab] = useState<"pipeline" | "customers" | "ai">("pipeline");
   return (
     <StaffShell title="CRM / ดีล">
-      <div className="flex gap-1 mb-4 bg-ice rounded-xl p-1 w-fit">
-        {([["pipeline", "Pipeline ดีล"], ["customers", "จัดการลูกค้า"]] as const).map(([k, label]) => (
+      <div className="flex gap-1 mb-4 bg-ice rounded-xl p-1 w-fit flex-wrap">
+        {([["pipeline", "Pipeline ดีล"], ["customers", "จัดการลูกค้า"], ["ai", "✨ AI ช่วยขาย"]] as const).map(([k, label]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`px-4 py-2 rounded-lg text-[13.5px] font-semibold transition ${tab === k ? "bg-white text-navy shadow-sm" : "text-muted"}`}>
             {label}
           </button>
         ))}
       </div>
-      {tab === "pipeline" ? <CrmBody /> : <CustomersTab />}
+      {tab === "pipeline" ? <CrmBody /> : tab === "customers" ? <CustomersTab /> : <SalesAiTab />}
     </StaffShell>
   );
 }
