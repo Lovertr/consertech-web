@@ -666,7 +666,7 @@ function ClaimForm({ empId, onSaved }: { empId: string; onSaved: () => void }) {
     setSaving(true); setMsg(null);
     const { error } = await supabase.from("expense_claims").insert({
       emp_id: empId, category: cat, detail: purpose.trim() || null, ref_doc: refDoc || null,
-      amount: totalRef.current, receipt_url: receiptUrls[0] ?? null, status: "รออนุมัติ",
+      amount: totalRef.current, receipt_url: receiptUrls[0] ?? null, receipt_urls: receiptUrls, status: "รออนุมัติ",
     });
     setSaving(false);
     if (error) { setMsg({ ok: false, text: String(error.message) }); return; }
@@ -728,9 +728,48 @@ function ClaimForm({ empId, onSaved }: { empId: string; onSaved: () => void }) {
 
 type DbClaim = {
   id: number; emp_id: string; category: string; detail: string | null; ref_doc: string | null;
-  amount: number; receipt_url: string | null; status: string; approver_note: string | null;
+  amount: number; receipt_url: string | null; receipt_urls: string[]; status: string; approver_note: string | null;
   approved_by: string | null; created_at: string;
 };
+
+const claimReceipts = (c: DbClaim): string[] =>
+  Array.isArray(c.receipt_urls) && c.receipt_urls.length > 0 ? c.receipt_urls : (c.receipt_url ? [c.receipt_url] : []);
+
+// เปิดหน้าพิมพ์หลักฐานการเบิก (ข้อมูลรายการ + รูปใบเสร็จทุกใบ) — ฝ่ายการเงินสั่งพิมพ์/บันทึก PDF ได้
+function printClaimEvidence(c: DbClaim, empName: string, catLabel: string, approverName: string) {
+  const receipts = claimReceipts(c);
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const dt = new Date(c.created_at).toLocaleString("th-TH", { day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  const html = `<!doctype html><html lang="th"><head><meta charset="utf-8"><title>EXP-${String(c.id).padStart(3, "0")}</title>
+  <style>
+    * { font-family: 'Segoe UI', Tahoma, sans-serif; box-sizing: border-box; }
+    body { margin: 0; padding: 24px 32px; color: #12212E; font-size: 13.5px; }
+    table.info td { padding: 4px 10px 4px 0; vertical-align: top; }
+    .lbl { color: #4A5E6E; width: 130px; }
+    img.receipt { max-width: 100%; max-height: 850px; border: 1px solid #D7E4F0; border-radius: 6px; margin-top: 8px; }
+    .page { page-break-before: always; padding-top: 12px; }
+    @media print { body { padding: 8mm 10mm; } }
+  </style></head><body>
+  <h2 style="margin:0 0 2px">หลักฐานการเบิกค่าใช้จ่าย — EXP-${String(c.id).padStart(3, "0")}</h2>
+  <p style="margin:0 0 12px;color:#4A5E6E;font-size:12px">CONSERTECH CO., LTD. · พิมพ์เมื่อ ${new Date().toLocaleString("th-TH")}</p>
+  <table class="info">
+    <tr><td class="lbl">พนักงาน</td><td><strong>${esc(empName)}</strong></td><td class="lbl">วันที่ยื่น</td><td>${dt}</td></tr>
+    <tr><td class="lbl">หมวด</td><td>${esc(catLabel)}</td><td class="lbl">สถานะ</td><td><strong>${esc(c.status)}</strong>${approverName ? ` (โดย ${esc(approverName)})` : ""}</td></tr>
+    <tr><td class="lbl">วัตถุประสงค์</td><td>${esc(c.detail ?? "-")}</td><td class="lbl">อ้างอิง</td><td>${esc(c.ref_doc ?? "-")}</td></tr>
+    <tr><td class="lbl">ยอดเบิก</td><td colspan="3" style="font-size:17px;font-weight:800">${Number(c.amount).toLocaleString("th-TH")} บาท</td></tr>
+  </table>
+  ${receipts.length === 0 ? '<p style="color:#8A9BA8;margin-top:16px">— รายการนี้ไม่มีรูปใบเสร็จแนบ —</p>' : receipts.map((u, i) => `
+    <div class="${i > 0 ? "page" : ""}" style="margin-top:14px">
+      <p style="font-weight:700;margin:0">📎 หลักฐานที่ ${i + 1} / ${receipts.length}</p>
+      <img class="receipt" src="${u}">
+    </div>`).join("")}
+  <script>window.onload = () => setTimeout(() => window.print(), 600);</script>
+  </body></html>`;
+  const w = window.open("", "_blank");
+  if (!w) { alert("เบราว์เซอร์บล็อกป๊อปอัป — อนุญาตป๊อปอัปเพื่อพิมพ์"); return; }
+  w.document.write(html);
+  w.document.close();
+}
 
 function ExpensesBody() {
   const { dept, empId } = useDept();
@@ -791,9 +830,22 @@ function ExpensesBody() {
                       </p>
                       <p className="text-[11.5px] text-muted/80 mt-0.5">
                         {c.ref_doc ? `อ้างอิง ${c.ref_doc} · ` : ""}{fmtDT(c.created_at)}
-                        {c.receipt_url && <> · <a href={c.receipt_url} target="_blank" rel="noreferrer" className="text-sky hover:underline">📷 ดูใบเสร็จ</a></>}
                         {c.approved_by && c.status !== "รออนุมัติ" && ` · โดย ${empNames[c.approved_by] ?? c.approved_by}`}
                       </p>
+                      {claimReceipts(c).length > 0 && (
+                        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                          {claimReceipts(c).map((u, i) => (
+                            <a key={i} href={u} target="_blank" rel="noreferrer" title={`เปิดใบเสร็จที่ ${i + 1} (คลิกขวา > Save เพื่อดาวน์โหลด)`}>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={u} alt={`ใบเสร็จ ${i + 1}`} className="w-12 h-12 object-cover rounded-lg border border-ice hover:border-brand transition" />
+                            </a>
+                          ))}
+                          <button onClick={() => printClaimEvidence(c, empNames[c.emp_id] ?? c.emp_id, `${m.icon} ${m.label}`, c.approved_by ? (empNames[c.approved_by] ?? "") : "")}
+                            className="text-[10.5px] font-bold bg-ice text-navy rounded px-2 py-1 hover:bg-sky/20" title="พิมพ์หลักฐานการเบิกพร้อมรูปใบเสร็จทุกใบ">
+                            🖨 พิมพ์หลักฐาน
+                          </button>
+                        </div>
+                      )}
                     </div>
                     <div className="text-right">
                       <p className="font-bold text-navy">{fmt(Number(c.amount))} ฿</p>
