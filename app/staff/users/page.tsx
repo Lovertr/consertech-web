@@ -26,6 +26,60 @@ function UsersBody() {
   const [saved, setSaved] = useState(false);
 
   const [dbStatus, setDbStatus] = useState<"db" | "local" | "loading">("loading");
+  const [accounts, setAccounts] = useState<Record<string, { email: string | null; mustChange: boolean }>>({});
+  const [acctEmail, setAcctEmail] = useState("");
+  const [acctMsg, setAcctMsg] = useState<string | null>(null);
+  const [acctBusy, setAcctBusy] = useState(false);
+  const [newEmp, setNewEmp] = useState<{ name: string; dept: Department } | null>(null);
+
+  const reloadEmployees = async () => {
+    if (!supabase) return;
+    const { data: emps } = await supabase.from("employees").select("*").order("id");
+    if (emps) {
+      setList(emps.map((r) => ({
+        id: r.id, name: r.name, dept: r.dept as Department, position: r.position as PositionKey,
+        otEnabled: r.ot_enabled,
+        leaveQuota: { annual: r.leave_annual, sick: r.leave_sick, personal: r.leave_personal },
+      })));
+      setAccounts(Object.fromEntries(emps.map((r) => [r.id, { email: r.email, mustChange: r.must_change_password }])));
+    }
+  };
+
+  // ── จัดการบัญชีเข้าระบบ (เฉพาะแอดมิน) ──
+  const acctAction = async (fn: string, args: Record<string, string>, okMsg: string) => {
+    if (!supabase) return;
+    setAcctBusy(true); setAcctMsg(null);
+    const { error } = await supabase.rpc(fn, args);
+    setAcctBusy(false);
+    if (error) { setAcctMsg("⚠ " + error.message); return; }
+    setAcctMsg("✓ " + okMsg);
+    setAcctEmail("");
+    await reloadEmployees();
+  };
+
+  const addEmployee = async () => {
+    if (!supabase || !newEmp || !newEmp.name.trim()) return;
+    const maxNum = Math.max(0, ...list.map((e) => parseInt(e.id.replace(/\D/g, "") || "0", 10)).filter((n) => !isNaN(n)));
+    const id = `EMP-${String(maxNum + 1).padStart(3, "0")}`;
+    const { error } = await supabase.from("employees").insert({ id, name: newEmp.name.trim(), dept: newEmp.dept });
+    if (error) { setAcctMsg("⚠ " + error.message); return; }
+    setNewEmp(null);
+    await reloadEmployees();
+    setSelectedId(id);
+  };
+
+  const removeEmployee = async () => {
+    if (!supabase) return;
+    if (accounts[selectedId]?.email) {
+      const { error } = await supabase.rpc("admin_delete_account", { p_emp_id: selectedId });
+      if (error) { setAcctMsg("⚠ " + error.message); return; }
+    }
+    await supabase.from("access_overrides").delete().eq("emp_id", selectedId);
+    await supabase.from("employees").delete().eq("id", selectedId);
+    await reloadEmployees();
+    setSelectedId(list.find((e) => e.id !== selectedId)?.id ?? "");
+    setAcctMsg("✓ ลบพนักงานแล้ว");
+  };
 
   // โหลดพนักงาน + สิทธิ์รายคนจากฐานข้อมูลจริง (fallback: mock + localStorage)
   useEffect(() => {
@@ -41,6 +95,7 @@ function UsersBody() {
             otEnabled: r.ot_enabled,
             leaveQuota: { annual: r.leave_annual, sick: r.leave_sick, personal: r.leave_personal },
           })));
+          setAccounts(Object.fromEntries(emps.map((r) => [r.id, { email: r.email, mustChange: r.must_change_password }])));
           const o: AccessOverrides = {};
           for (const r of ovr ?? []) (o[r.emp_id] ??= {})[r.module as ModuleKey] = r.access as Access;
           setAccessOverride(o);
@@ -114,7 +169,24 @@ function UsersBody() {
               </button>
             ))}
           </div>
-          {!readOnly && <button className="mt-2 w-full btn btn-outline text-[12.5px] py-1.5">＋ เพิ่มพนักงานใหม่</button>}
+          {!readOnly && !newEmp && (
+            <button onClick={() => setNewEmp({ name: "", dept: "sales" })} className="mt-2 w-full btn btn-outline text-[12.5px] py-1.5">＋ เพิ่มพนักงานใหม่</button>
+          )}
+          {!readOnly && newEmp && (
+            <div className="mt-2 rounded-lg border border-dashed border-sky/60 p-2.5 space-y-2">
+              <input autoFocus placeholder="ชื่อพนักงาน..." value={newEmp.name}
+                onChange={(e) => setNewEmp({ ...newEmp, name: e.target.value })}
+                className="w-full rounded-lg border border-ice px-2.5 py-1.5 text-[13px]" />
+              <select value={newEmp.dept} onChange={(e) => setNewEmp({ ...newEmp, dept: e.target.value as Department })}
+                className="w-full rounded-lg border border-ice px-2.5 py-1.5 text-[13px] bg-white">
+                {departments.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
+              </select>
+              <div className="flex gap-1.5">
+                <button onClick={addEmployee} className="btn btn-primary text-[12px] py-1.5 flex-1">บันทึก</button>
+                <button onClick={() => setNewEmp(null)} className="btn btn-outline text-[12px] py-1.5">ยกเลิก</button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* แผงแก้ไข */}
@@ -172,6 +244,51 @@ function UsersBody() {
                 ))}
               </div>
             </div>
+          </div>
+
+          {/* บัญชีเข้าระบบ */}
+          <div className="card-white p-4 min-[600px]:p-5 min-w-0">
+            <p className="font-bold text-navy text-[15px]">บัญชีเข้าระบบ (Login)</p>
+            {accounts[emp.id]?.email ? (
+              <div className="mt-2.5">
+                <p className="text-[13.5px]">
+                  <span className="text-[10.5px] font-bold bg-brand/10 text-brand rounded px-1.5 py-0.5 mr-2">มีบัญชี</span>
+                  <strong className="text-navy">{accounts[emp.id].email}</strong>
+                  {accounts[emp.id].mustChange && (
+                    <span className="ml-2 text-[10.5px] font-bold bg-amber/15 text-amber rounded px-1.5 py-0.5">รอเปลี่ยนรหัสครั้งแรก</span>
+                  )}
+                </p>
+                {!readOnly && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button disabled={acctBusy}
+                      onClick={() => acctAction("admin_reset_password", { p_emp_id: emp.id }, `รีเซ็ตรหัสของ ${emp.name} เป็น 1234 แล้ว (ต้องตั้งรหัสใหม่ตอนล็อกอิน)`)}
+                      className="btn btn-outline text-[12.5px] py-1.5 px-3 disabled:opacity-60">🔑 รีเซ็ตรหัสเป็น 1234</button>
+                    <button disabled={acctBusy}
+                      onClick={() => acctAction("admin_delete_account", { p_emp_id: emp.id }, `ลบบัญชีของ ${emp.name} แล้ว (ตัวพนักงานยังอยู่)`)}
+                      className="btn btn-outline text-[12.5px] py-1.5 px-3 !text-[#D94141] !border-[#D94141]/40 disabled:opacity-60">✕ ลบบัญชี</button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="mt-2.5">
+                <p className="text-[12.5px] text-muted"><span className="text-[10.5px] font-bold bg-ice text-muted rounded px-1.5 py-0.5 mr-2">ยังไม่มีบัญชี</span>พนักงานคนนี้ยังเข้าระบบไม่ได้</p>
+                {!readOnly && (
+                  <div className="mt-3 flex flex-wrap gap-2 items-center">
+                    <input type="email" placeholder="email@cs-th.com" value={acctEmail} onChange={(e) => setAcctEmail(e.target.value)}
+                      className="rounded-lg border border-ice px-3 py-1.5 text-[13px] flex-1 min-w-[180px]" />
+                    <button disabled={acctBusy || !acctEmail.includes("@")}
+                      onClick={() => acctAction("admin_create_account", { p_emp_id: emp.id, p_email: acctEmail.trim() }, `สร้างบัญชี ${acctEmail.trim()} แล้ว — รหัสเริ่มต้น 1234 (บังคับเปลี่ยนตอนล็อกอินแรก)`)}
+                      className="btn btn-primary text-[12.5px] py-1.5 px-3 disabled:opacity-60">＋ สร้างบัญชี (รหัส 1234)</button>
+                  </div>
+                )}
+              </div>
+            )}
+            {acctMsg && <p className={`mt-2.5 text-[12.5px] font-semibold rounded-lg px-3 py-2 ${acctMsg.startsWith("✓") ? "bg-brand/10 text-brand" : "bg-[#D94141]/10 text-[#D94141]"}`}>{acctMsg}</p>}
+            {!readOnly && emp.id !== "EMP-ADMIN" && (
+              <button disabled={acctBusy} onClick={removeEmployee}
+                className="mt-3 text-[11.5px] text-muted hover:text-[#D94141] font-semibold">🗑 ลบพนักงานคนนี้ออกจากระบบ (รวมบัญชี)</button>
+            )}
+            <p className="mt-2 text-[11px] text-muted/70 italic">รหัสเริ่มต้น/รีเซ็ตคือ 1234 — พนักงานถูกบังคับตั้งรหัสใหม่ (≥6 ตัว) ตอนล็อกอินครั้งถัดไปเสมอ</p>
           </div>
 
           {/* สิทธิ์เข้าถึงโมดูล */}

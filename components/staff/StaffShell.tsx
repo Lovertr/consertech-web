@@ -1,19 +1,21 @@
 "use client";
 
-// โครงหน้า Portal ภายใน — เมนูเปลี่ยนตาม "สิทธิ์รายคน" = ค่าเริ่มต้นของแผนก + ที่แอดมินปรับรายคน (หน้าจัดการผู้ใช้)
-// user switcher มีไว้เดโมเท่านั้น — production ผูกบัญชีจริงจาก Supabase Auth และลบออก
+// โครงหน้า Portal ภายใน — ระบุตัวตนจากบัญชีล็อกอินจริง (Supabase Auth)
+// สิทธิ์รายคน = ค่าเริ่มต้นของแผนก + ที่แอดมินปรับรายคน (หน้าจัดการผู้ใช้)
+// ล็อกอินครั้งแรก (หรือหลังแอดมินรีเซ็ตรหัส) → บังคับตั้งรหัสผ่านใหม่ก่อนใช้งาน
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, createContext, useContext, ReactNode } from "react";
 import { departments, type Department } from "@/lib/data";
-import { permissions, modulesMeta, employees, type ModuleKey, type Access } from "@/lib/staffData";
+import { permissions, modulesMeta, employees as mockEmployees, type ModuleKey, type Access } from "@/lib/staffData";
 import { supabase } from "@/lib/supabase";
 
 export type AccessOverrides = Record<string, Partial<Record<ModuleKey, Access>>>;
 export const OVERRIDES_KEY = "consertech-access-overrides";
-export const EMP_KEY = "consertech-staff-emp";
 export const PERMS_EVENT = "consertech-perms-updated";
+
+type EmpInfo = { id: string; name: string; dept: Department; email: string; mustChange: boolean };
 
 const DeptCtx = createContext<{ dept: Department; empId: string; access: (m: ModuleKey) => Access }>({
   dept: "sales",
@@ -38,16 +40,100 @@ const routes: Record<ModuleKey, string> = {
   users: "/staff/users",
 };
 
+// ── ฟอร์มบังคับตั้งรหัสผ่านใหม่ (ล็อกอินครั้งแรก/หลังรีเซ็ต) ──
+function ForcePasswordChange({ email, onDone }: { email: string; onDone: () => void }) {
+  const [pw1, setPw1] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (pw1.length < 6) { setErr("รหัสผ่านใหม่ต้องยาวอย่างน้อย 6 ตัวอักษร"); return; }
+    if (pw1 !== pw2) { setErr("รหัสผ่านทั้งสองช่องไม่ตรงกัน"); return; }
+    if (!supabase) return;
+    setBusy(true);
+    setErr(null);
+    const { error } = await supabase.auth.updateUser({ password: pw1 });
+    if (error) { setErr(error.message); setBusy(false); return; }
+    await supabase.rpc("clear_my_must_change");
+    setBusy(false);
+    onDone();
+  };
+
+  return (
+    <div className="min-h-[70vh] bg-ice/40 flex items-start justify-center pt-10 px-4">
+      <div className="card-white p-6 min-[600px]:p-8 w-full max-w-[440px]">
+        <p className="text-[11px] font-bold tracking-widest text-amber uppercase">First Login</p>
+        <h1 className="mt-1 text-[20px] font-bold text-navy">ตั้งรหัสผ่านใหม่ก่อนเริ่มใช้งาน</h1>
+        <p className="text-[13px] text-muted mt-1">
+          บัญชี <strong className="text-navy">{email}</strong> ยังใช้รหัสเริ่มต้นอยู่ — เพื่อความปลอดภัย กรุณาตั้งรหัสผ่านของคุณเอง (อย่างน้อย 6 ตัวอักษร)
+        </p>
+        <form onSubmit={submit} className="mt-5 space-y-3.5">
+          <div>
+            <label className="block text-[13.5px] font-semibold text-navy mb-1">รหัสผ่านใหม่</label>
+            <input type="password" required value={pw1} onChange={(e) => setPw1(e.target.value)} autoComplete="new-password"
+              className="w-full rounded-xl border border-ice px-4 py-2.5 text-[15px] focus:outline-none focus:border-brand" />
+          </div>
+          <div>
+            <label className="block text-[13.5px] font-semibold text-navy mb-1">ยืนยันรหัสผ่านใหม่</label>
+            <input type="password" required value={pw2} onChange={(e) => setPw2(e.target.value)} autoComplete="new-password"
+              className="w-full rounded-xl border border-ice px-4 py-2.5 text-[15px] focus:outline-none focus:border-brand" />
+          </div>
+          {err && <p className="text-[13px] font-semibold text-white bg-[#D94141] rounded-lg px-3 py-2">⚠ {err}</p>}
+          <button type="submit" disabled={busy} className="btn btn-primary w-full disabled:opacity-60">
+            {busy ? "กำลังบันทึก..." : "บันทึกรหัสผ่านใหม่และเข้าใช้งาน"}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function StaffShell({ children, title }: { children: ReactNode; title?: string }) {
-  const [empId, setEmpId] = useState(employees[0].id);
+  // undefined = กำลังโหลด, null = ไม่มี
+  const [sessionEmail, setSessionEmail] = useState<string | null | undefined>(undefined);
+  const [empInfo, setEmpInfo] = useState<EmpInfo | null | undefined>(undefined);
   const [overrides, setOverrides] = useState<AccessOverrides>({});
-  const [ready, setReady] = useState(false); // รอโหลดค่าจาก localStorage ก่อนค่อยเช็กสิทธิ์ redirect
   const pathname = usePathname();
   const router = useRouter();
 
+  // สถานะล็อกอิน
+  useEffect(() => {
+    if (!supabase) { setSessionEmail(null); return; }
+    supabase.auth.getSession().then(({ data }) => setSessionEmail(data.session?.user?.email ?? null));
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSessionEmail(s?.user?.email ?? null));
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  // หาข้อมูลพนักงานจากอีเมลที่ล็อกอิน
+  useEffect(() => {
+    if (sessionEmail === undefined) return;
+    if (sessionEmail === null) {
+      if (!supabase) {
+        // โหมดเดโม (ไม่มีการเชื่อมต่อ): ใช้พนักงานตัวอย่างคนแรก
+        const m = mockEmployees[0];
+        setEmpInfo({ id: m.id, name: m.name, dept: m.dept, email: "demo", mustChange: false });
+      } else {
+        router.replace("/staff"); // ยังไม่ล็อกอิน → ไปหน้า Login
+      }
+      return;
+    }
+    (async () => {
+      const { data } = await supabase!
+        .from("employees").select("id,name,dept,email,must_change_password")
+        .eq("email", sessionEmail).single();
+      if (data) {
+        setEmpInfo({ id: data.id, name: data.name, dept: data.dept as Department, email: data.email, mustChange: data.must_change_password });
+      } else {
+        setEmpInfo(null); // มีบัญชีแต่ไม่ผูกกับพนักงาน
+      }
+    })();
+  }, [sessionEmail, router]);
+
+  // สิทธิ์รายคนจากฐานข้อมูล
   useEffect(() => {
     const loadOverrides = async () => {
-      // ฐานข้อมูลจริงก่อน → fallback localStorage
       if (supabase) {
         const { data, error } = await supabase.from("access_overrides").select("emp_id,module,access");
         if (!error && data) {
@@ -59,44 +145,50 @@ export default function StaffShell({ children, title }: { children: ReactNode; t
       }
       try { setOverrides(JSON.parse(localStorage.getItem(OVERRIDES_KEY) ?? "{}")); } catch {}
     };
-    try {
-      const savedEmp = localStorage.getItem(EMP_KEY);
-      if (savedEmp && employees.some((e) => e.id === savedEmp)) {
-        setEmpId(savedEmp);
-      } else {
-        // ย้ายจากระบบเดิมที่จำเป็นรายแผนก → เลือกพนักงานคนแรกของแผนกนั้น
-        const savedDept = localStorage.getItem("consertech-staff-dept") as Department | null;
-        const emp = savedDept ? employees.find((e) => e.dept === savedDept) : null;
-        if (emp) setEmpId(emp.id);
-      }
-    } catch {}
     loadOverrides();
-    setReady(true);
-    // อัปเดตทันทีเมื่อหน้าจัดการผู้ใช้กดบันทึกสิทธิ์
     window.addEventListener(PERMS_EVENT, loadOverrides);
-    window.addEventListener("storage", loadOverrides);
-    return () => {
-      window.removeEventListener(PERMS_EVENT, loadOverrides);
-      window.removeEventListener("storage", loadOverrides);
-    };
+    return () => window.removeEventListener(PERMS_EVENT, loadOverrides);
   }, []);
 
-  const emp = employees.find((e) => e.id === empId) ?? employees[0];
-  const dept = emp.dept;
+  const dept = empInfo?.dept ?? "sales";
+  const empId = empInfo?.id ?? "";
   const deptLabel = departments.find((d) => d.key === dept)?.label;
-  // สิทธิ์รายคน: ค่าที่แอดมินปรับรายคน > ค่าเริ่มต้นตามแผนก
-  const access = (m: ModuleKey): Access => overrides[emp.id]?.[m] ?? permissions[dept][m];
+  const access = (m: ModuleKey): Access => (empInfo ? overrides[empInfo.id]?.[m] ?? permissions[dept][m] : "none");
 
-  // ถ้าผู้ใช้คนนี้ไม่มีสิทธิ์หน้าปัจจุบัน ให้เด้งกลับภาพรวม
+  // ไม่มีสิทธิ์หน้าปัจจุบัน → เด้งกลับภาพรวม
   useEffect(() => {
-    if (!ready) return;
+    if (!empInfo) return;
     const current = (Object.entries(routes) as [ModuleKey, string][]).find(([, r]) => pathname.startsWith(r));
     if (current && access(current[0]) === "none") router.replace("/staff/dashboard");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, empId, overrides, pathname, router]);
+  }, [empInfo, overrides, pathname, router]);
+
+  const logout = async () => {
+    if (supabase) await supabase.auth.signOut();
+    router.replace("/staff");
+  };
+
+  // ── สถานะกลาง ──
+  if (sessionEmail === undefined || (sessionEmail !== null && empInfo === undefined)) {
+    return <div className="min-h-[60vh] bg-ice/40 flex items-center justify-center text-[14px] text-muted">⏳ กำลังตรวจสอบสิทธิ์...</div>;
+  }
+  if (sessionEmail !== null && empInfo === null) {
+    return (
+      <div className="min-h-[60vh] bg-ice/40 flex items-center justify-center px-4">
+        <div className="card-white p-6 max-w-[420px] text-center">
+          <p className="text-[15px] font-bold text-navy">บัญชี {sessionEmail} ยังไม่ผูกกับข้อมูลพนักงาน</p>
+          <p className="text-[13px] text-muted mt-1.5">แจ้งแอดมินให้ผูกบัญชีนี้กับพนักงานที่หน้า &ldquo;จัดการผู้ใช้&rdquo;</p>
+          <button onClick={logout} className="btn btn-outline mt-4 text-[13px]">← ออกจากระบบ</button>
+        </div>
+      </div>
+    );
+  }
+  if (empInfo?.mustChange && sessionEmail) {
+    return <ForcePasswordChange email={empInfo.email} onDone={() => setEmpInfo({ ...empInfo, mustChange: false })} />;
+  }
 
   return (
-    <DeptCtx.Provider value={{ dept, empId: emp.id, access }}>
+    <DeptCtx.Provider value={{ dept, empId, access }}>
       <div className="min-h-[85vh] bg-ice/40">
         <div className="container-site py-4 min-[820px]:py-6 grid gap-4 min-[820px]:gap-6 min-[820px]:grid-cols-[230px_1fr] items-start">
           {/* Sidebar — มือถือ: แถบชิปเลื่อนแนวนอน / จอใหญ่: เมนูแนวตั้ง */}
@@ -104,7 +196,10 @@ export default function StaffShell({ children, title }: { children: ReactNode; t
             <p className="hidden min-[820px]:block text-[11px] font-bold tracking-widest text-sky uppercase px-2">
               Portal — {deptLabel}
             </p>
-            <p className="hidden min-[820px]:block text-[12px] font-bold text-navy px-2 mt-0.5">👤 {emp.name}</p>
+            <p className="hidden min-[820px]:block text-[12px] font-bold text-navy px-2 mt-0.5 truncate">👤 {empInfo?.name}</p>
+            {empInfo?.email !== "demo" && (
+              <p className="hidden min-[820px]:block text-[10.5px] text-muted px-2 truncate">{empInfo?.email}</p>
+            )}
             <nav className="min-[820px]:mt-2 flex min-[820px]:flex-col gap-1 overflow-x-auto max-w-full pb-1 min-[820px]:pb-0 [-webkit-overflow-scrolling:touch]">
               {modulesMeta.map((m) => {
                 const acc = access(m.key);
@@ -131,25 +226,9 @@ export default function StaffShell({ children, title }: { children: ReactNode; t
             </nav>
 
             <div className="mt-2 min-[820px]:mt-4 border-t border-ice pt-2 min-[820px]:pt-3 min-[820px]:px-2 flex min-[820px]:flex-col items-center min-[820px]:items-stretch gap-2 min-[820px]:gap-0">
-              <p className="hidden min-[820px]:block text-[10.5px] text-muted/70 mb-1">สลับผู้ใช้ (เดโม):</p>
-              <select
-                value={emp.id}
-                onChange={(e) => {
-                  setEmpId(e.target.value);
-                  try { localStorage.setItem(EMP_KEY, e.target.value); } catch {}
-                }}
-                className="flex-1 min-[820px]:flex-none min-w-0 min-[820px]:w-full text-[12.5px] min-[820px]:text-[13px] rounded-lg border border-ice px-2 py-1.5 bg-white"
-                aria-label="สลับผู้ใช้ (เดโม)"
-              >
-                {employees.map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.name} — {departments.find((d) => d.key === e.dept)?.label}
-                  </option>
-                ))}
-              </select>
-              <Link href="/staff" className="shrink-0 min-[820px]:block min-[820px]:mt-3 text-[12.5px] min-[820px]:text-[13px] text-sky font-semibold hover:text-brand whitespace-nowrap">
+              <button onClick={logout} className="shrink-0 min-[820px]:block text-left text-[12.5px] min-[820px]:text-[13px] text-sky font-semibold hover:text-brand whitespace-nowrap">
                 ← ออกจากระบบ
-              </Link>
+              </button>
             </div>
           </aside>
 
@@ -158,7 +237,7 @@ export default function StaffShell({ children, title }: { children: ReactNode; t
             {title && <h1 className="text-[22px] min-[900px]:text-[28px] font-bold mb-1">{title}</h1>}
             <p className="text-[12px] text-muted mb-4">
               {supabase
-                ? "🟢 ลงเวลา · จัดการผู้ใช้ · สิทธิ์เข้าถึง — เชื่อมฐานข้อมูลจริงแล้ว | โมดูลอื่นยังเป็นข้อมูลจำลอง (ทยอยเชื่อมตาม Roadmap)"
+                ? "🟢 บัญชีผู้ใช้ · ลงเวลา · จัดการผู้ใช้ · สิทธิ์เข้าถึง — เชื่อมฐานข้อมูลจริงแล้ว | โมดูลอื่นยังเป็นข้อมูลจำลอง (ทยอยเชื่อมตาม Roadmap)"
                 : "ข้อมูลจำลองสำหรับเดโม (Mockup) — ยังไม่เชื่อมต่อฐานข้อมูลจริง"}
             </p>
             {children}
