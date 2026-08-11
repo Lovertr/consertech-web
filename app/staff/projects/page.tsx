@@ -31,9 +31,12 @@ const fmtDate = (iso: string | null) =>
   iso ? new Date(iso + "T00:00:00").toLocaleDateString("th-TH", { day: "numeric", month: "short" }) : "-";
 
 // Gantt จริง — สร้างจากช่วงวันที่ของ Milestone ทุกโปรเจกต์ (ตั้งค่าวันเริ่ม/สิ้นสุดได้ที่การ์ด Milestone)
-function GanttSection({ projects, milestones }: { projects: DbProject[]; milestones: DbMilestone[] }) {
+function GanttSection({ projects, milestones, selectedId }: { projects: DbProject[]; milestones: DbMilestone[]; selectedId: number | null }) {
+  const [scope, setScope] = useState<"selected" | "all">("selected");
   const codeOf = (id: number) => projects.find((p) => p.id === id)?.code ?? `#${id}`;
+  const selCode = selectedId !== null ? codeOf(selectedId) : null;
   const dated = milestones.filter((m) => m.date_from && m.date_to)
+    .filter((m) => scope === "all" || selectedId === null || m.project_id === selectedId)
     .sort((a, b) => codeOf(a.project_id).localeCompare(codeOf(b.project_id)) || a.sort - b.sort);
   if (dated.length === 0) {
     return (
@@ -63,8 +66,20 @@ function GanttSection({ projects, milestones }: { projects: DbProject[]; milesto
   return (
     <div className="mt-5 card-white p-5 overflow-x-auto">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-        <p className="font-bold text-navy">แผนงานรวม (Gantt) — จากวันที่ Milestone จริง</p>
-        <p className="text-[11px] text-muted/70">ปรับแผน: แก้วันเริ่ม/สิ้นสุดที่การ์ด Milestone ของโปรเจกต์ด้านบน</p>
+        <p className="font-bold text-navy">
+          แผนงาน (Gantt){scope === "selected" && selCode ? ` — ${selCode}` : " — ทุกโปรเจกต์"}
+          <span className="text-[11px] text-muted/70 font-normal ml-2">ตรงกับการ์ด Milestone ด้านบน · แก้วันที่ที่การ์ด Milestone</span>
+        </p>
+        <div className="flex gap-1 bg-ice rounded-lg p-0.5">
+          <button onClick={() => setScope("selected")}
+            className={`text-[11.5px] font-bold rounded-md px-2.5 py-1 transition ${scope === "selected" ? "bg-white text-navy shadow-sm" : "text-muted"}`}>
+            โปรเจกต์ที่เลือก
+          </button>
+          <button onClick={() => setScope("all")}
+            className={`text-[11.5px] font-bold rounded-md px-2.5 py-1 transition ${scope === "all" ? "bg-white text-navy shadow-sm" : "text-muted"}`}>
+            ทุกโปรเจกต์
+          </button>
+        </div>
       </div>
       <div className="min-w-[720px]">
         <div className="relative h-5 ml-[220px] border-b border-ice">
@@ -96,7 +111,7 @@ function GanttSection({ projects, milestones }: { projects: DbProject[]; milesto
                     {pct > 0 && pct < 100 && (
                       <span className="absolute inset-y-0 left-0 bg-navy/25 rounded-l" style={{ width: `${pct}%` }} />
                     )}
-                    <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white">{pct}%</span>
+                    <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white whitespace-nowrap overflow-hidden">{pct}%</span>
                   </div>
                 </div>
               </div>
@@ -477,7 +492,7 @@ function ProjectsBody() {
                         </>
                       )}
                     </div>
-                    <span className="text-[12px] font-bold text-amber shrink-0">{m.pct}%</span>
+                    <span className="text-[11px] font-bold text-amber shrink-0 text-center leading-tight" title="สัดส่วนงวดจ่ายของ Milestone นี้ (น้ำหนักในการคิด % โปรเจกต์)">งวด<br/>{m.pct}%</span>
                     {!readOnly && <button onClick={() => delMilestone(m)} className="text-muted/50 hover:text-[#D94141] shrink-0">✕</button>}
                   </div>
                 ))}
@@ -522,7 +537,7 @@ function ProjectsBody() {
         </>
       )}
 
-      <GanttSection projects={projects} milestones={allMilestones} />
+      <GanttSection projects={projects} milestones={allMilestones} selectedId={selectedId} />
 
       {/* Tickets */}
       <div className="mt-5 card-white overflow-hidden">
