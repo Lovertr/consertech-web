@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import StaffShell, { useDept } from "@/components/staff/StaffShell";
-import { ganttMonths, ganttRows, knowledgeBase } from "@/lib/staffData";
+import { knowledgeBase } from "@/lib/staffData";
 import { supabase } from "@/lib/supabase";
 import { callCopilot } from "@/lib/copilot";
 
@@ -13,7 +13,7 @@ type DbProject = {
   id: number; code: string; name: string; customer: string | null; deal_id: number | null;
   pm: string | null; status: string; progress: number; note: string | null; created_at: string;
 };
-type DbMilestone = { id: number; project_id: number; name: string; pct: number; done: boolean; invoice: string | null; sort: number };
+type DbMilestone = { id: number; project_id: number; name: string; pct: number; done: boolean; invoice: string | null; sort: number; date_from: string | null; date_to: string | null };
 type DbAcceptance = { id: number; project_id: number; item: string; done: boolean; sort: number };
 type DbTicket = { id: number; no: string; project_id: number | null; site: string; issue: string; assignee: string | null; due: string | null; status: string; created_at: string };
 type EmpLite = { id: string; name: string };
@@ -30,47 +30,92 @@ const statusChip = (s: string) =>
 const fmtDate = (iso: string | null) =>
   iso ? new Date(iso + "T00:00:00").toLocaleDateString("th-TH", { day: "numeric", month: "short" }) : "-";
 
-// Gantt chart อย่างง่าย (ภาพรวมแผนงาน)
-function GanttSection() {
-  const colW = 100 / ganttMonths.length;
-  const barColor = { brand: "bg-brand", amber: "bg-amber", sky: "bg-sky/70" } as const;
+// Gantt จริง — สร้างจากช่วงวันที่ของ Milestone ทุกโปรเจกต์ (ตั้งค่าวันเริ่ม/สิ้นสุดได้ที่การ์ด Milestone)
+function GanttSection({ projects, milestones }: { projects: DbProject[]; milestones: DbMilestone[] }) {
+  const codeOf = (id: number) => projects.find((p) => p.id === id)?.code ?? `#${id}`;
+  const dated = milestones.filter((m) => m.date_from && m.date_to)
+    .sort((a, b) => codeOf(a.project_id).localeCompare(codeOf(b.project_id)) || a.sort - b.sort);
+  if (dated.length === 0) {
+    return (
+      <div className="mt-5 card-white p-5 text-[13px] text-muted">
+        📊 Gantt แผนงานรวม — ยังไม่มีข้อมูล: ใส่ &ldquo;วันเริ่ม → วันสิ้นสุด&rdquo; ในการ์ด Milestone ของแต่ละโปรเจกต์ แล้วแผนงานจะแสดงที่นี่อัตโนมัติ
+      </div>
+    );
+  }
+  const min = Math.min(...dated.map((m) => new Date(m.date_from!).getTime()));
+  const max = Math.max(...dated.map((m) => new Date(m.date_to!).getTime()));
+  const span = Math.max(1, max - min);
+  const today = Date.now();
+  const todayPct = today >= min && today <= max ? ((today - min) / span) * 100 : null;
+
+  // หัวเดือนจากช่วงจริง
+  const months: { label: string; left: number }[] = [];
+  const cur = new Date(min); cur.setDate(1);
+  while (cur.getTime() <= max) {
+    months.push({
+      label: cur.toLocaleDateString("th-TH", { month: "short", year: months.length === 0 || cur.getMonth() === 0 ? "2-digit" : undefined }),
+      left: Math.max(0, ((cur.getTime() - min) / span) * 100),
+    });
+    cur.setMonth(cur.getMonth() + 1);
+  }
+
+  const completion = (m: DbMilestone) => {
+    if (m.done) return 100;
+    const s = new Date(m.date_from!).getTime(), e = new Date(m.date_to!).getTime();
+    if (today <= s) return 0;
+    if (today >= e) return 95;
+    return Math.round(((today - s) / Math.max(1, e - s)) * 100);
+  };
+
   return (
     <div className="mt-5 card-white p-5 overflow-x-auto">
-      <p className="font-bold text-navy mb-3">แผนงานรวม (Gantt) — มิ.ย. ถึง ต.ค. 69</p>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <p className="font-bold text-navy">แผนงานรวม (Gantt) — จากวันที่ Milestone จริง</p>
+        <p className="text-[11px] text-muted/70">ปรับแผน: แก้วันเริ่ม/สิ้นสุดที่การ์ด Milestone ของโปรเจกต์ด้านบน</p>
+      </div>
       <div className="min-w-[720px]">
-        <div className="flex text-[11.5px] font-bold text-sky border-b border-ice pb-1.5 ml-[220px]">
-          {ganttMonths.map((m) => (
-            <div key={m} style={{ width: `${colW}%` }} className="text-center border-l border-ice/60">{m}</div>
+        <div className="relative h-5 ml-[220px] border-b border-ice">
+          {months.map((mo, i) => (
+            <span key={i} className="absolute text-[11.5px] font-bold text-sky border-l border-ice/60 pl-1" style={{ left: `${mo.left}%` }}>{mo.label}</span>
           ))}
         </div>
         <div className="mt-2 space-y-1.5">
-          {ganttRows.map((r, i) => (
-            <div key={i} className="flex items-center text-[12px]">
-              <div className="w-[220px] shrink-0 pr-3">
-                <p className="font-semibold text-navy leading-tight truncate">{r.label}</p>
-                <p className="text-[10.5px] text-muted/70">{r.project}</p>
-              </div>
-              <div className="relative flex-1 h-6 rounded bg-ice/40">
-                {ganttMonths.map((_, mi) => (
-                  <span key={mi} className="absolute top-0 bottom-0 border-l border-ice/60" style={{ left: `${mi * colW}%` }} />
-                ))}
-                <div
-                  className={`absolute top-0.5 bottom-0.5 rounded ${barColor[r.color ?? "brand"]}`}
-                  style={{ left: `${(r.start / ganttMonths.length) * 100}%`, width: `${(r.span / ganttMonths.length) * 100}%` }}
-                >
-                  {r.pct > 0 && (
-                    <span className="absolute inset-y-0 left-0 bg-navy/25 rounded-l" style={{ width: `${r.pct}%` }} />
-                  )}
-                  <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white">{r.pct}%</span>
+          {dated.map((m) => {
+            const s = ((new Date(m.date_from!).getTime() - min) / span) * 100;
+            const w = Math.max(2.5, ((new Date(m.date_to!).getTime() - new Date(m.date_from!).getTime()) / span) * 100);
+            const pct = completion(m);
+            const state = m.done ? "done" : pct > 0 ? "doing" : "waiting";
+            return (
+              <div key={m.id} className="flex items-center text-[12px]">
+                <div className="w-[220px] shrink-0 pr-3">
+                  <p className="font-semibold text-navy leading-tight truncate">{m.name}</p>
+                  <p className="text-[10.5px] text-muted/70">{codeOf(m.project_id)}</p>
+                </div>
+                <div className="relative flex-1 h-6 rounded bg-ice/40">
+                  {months.map((mo, mi) => (
+                    <span key={mi} className="absolute top-0 bottom-0 border-l border-ice/60" style={{ left: `${mo.left}%` }} />
+                  ))}
+                  {todayPct !== null && <span className="absolute top-0 bottom-0 border-l-2 border-[#D94141]/60 z-10" style={{ left: `${todayPct}%` }} />}
+                  <div
+                    className={`absolute top-0.5 bottom-0.5 rounded ${state === "done" ? "bg-sky/70" : state === "doing" ? "bg-brand" : "bg-amber"}`}
+                    style={{ left: `${s}%`, width: `${w}%` }}
+                  >
+                    {pct > 0 && pct < 100 && (
+                      <span className="absolute inset-y-0 left-0 bg-navy/25 rounded-l" style={{ width: `${pct}%` }} />
+                    )}
+                    <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white">{pct}%</span>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
         <p className="mt-3 text-[11px] text-muted/70">
           <span className="inline-block w-2.5 h-2.5 bg-sky/70 rounded-sm mr-1" />เสร็จแล้ว
           <span className="inline-block w-2.5 h-2.5 bg-brand rounded-sm ml-3 mr-1" />กำลังทำ
           <span className="inline-block w-2.5 h-2.5 bg-amber rounded-sm ml-3 mr-1" />รอเริ่ม
+          <span className="inline-block border-l-2 border-[#D94141]/60 h-3 ml-3 mr-1 align-middle" />วันนี้
+          <span className="ml-3">— ข้อมูลชุดเดียวกับที่ลูกค้าเห็นใน Client Portal</span>
         </p>
       </div>
     </div>
@@ -185,6 +230,7 @@ function ProjectsBody() {
   const [emps, setEmps] = useState<EmpLite[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [milestones, setMilestones] = useState<DbMilestone[]>([]);
+  const [allMilestones, setAllMilestones] = useState<DbMilestone[]>([]);
   const [acceptance, setAcceptance] = useState<DbAcceptance[]>([]);
   const [tickets, setTickets] = useState<DbTicket[]>([]);
   const [adding, setAdding] = useState(false);
@@ -213,12 +259,16 @@ function ProjectsBody() {
   useEffect(() => { load(); }, [load]);
 
   const loadDetail = useCallback(async () => {
-    if (!supabase || selectedId === null) { setMilestones([]); setAcceptance([]); return; }
+    if (!supabase) return;
     const [m, a] = await Promise.all([
-      supabase.from("project_milestones").select("*").eq("project_id", selectedId).order("sort"),
-      supabase.from("project_acceptance").select("*").eq("project_id", selectedId).order("sort"),
+      supabase.from("project_milestones").select("*").order("sort"),
+      selectedId !== null
+        ? supabase.from("project_acceptance").select("*").eq("project_id", selectedId).order("sort")
+        : Promise.resolve({ data: [] }),
     ]);
-    setMilestones((m.data as DbMilestone[]) ?? []);
+    const all = (m.data as DbMilestone[]) ?? [];
+    setAllMilestones(all);
+    setMilestones(selectedId !== null ? all.filter((x) => x.project_id === selectedId) : []);
     setAcceptance((a.data as DbAcceptance[]) ?? []);
   }, [selectedId]);
   useEffect(() => { loadDetail(); }, [loadDetail]);
@@ -249,6 +299,11 @@ function ProjectsBody() {
   const setInvoice = async (m: DbMilestone, invoice: string) => {
     if (!supabase) return;
     await supabase.from("project_milestones").update({ invoice: invoice.trim() || null }).eq("id", m.id);
+    loadDetail();
+  };
+  const setMsDates = async (m: DbMilestone, field: "date_from" | "date_to", value: string) => {
+    if (!supabase) return;
+    await supabase.from("project_milestones").update({ [field]: value || null }).eq("id", m.id);
     loadDetail();
   };
   const addMilestone = async () => {
@@ -392,11 +447,21 @@ function ProjectsBody() {
                     <div className="flex-1 min-w-0">
                       <p className={`font-semibold ${m.done ? "text-navy" : "text-muted"}`}>{m.name}</p>
                       {readOnly ? (
-                        m.invoice && <p className="text-[11px] text-sky">→ ใบแจ้งหนี้ {m.invoice}</p>
+                        <>
+                          {m.invoice && <p className="text-[11px] text-sky">→ ใบแจ้งหนี้ {m.invoice}</p>}
+                          {m.date_from && <p className="text-[10.5px] text-muted/70">{m.date_from} → {m.date_to ?? "?"}</p>}
+                        </>
                       ) : (
-                        <input defaultValue={m.invoice ?? ""} key={m.id + (m.invoice ?? "")} placeholder="เลขใบแจ้งหนี้ (ถ้ามี)"
-                          onBlur={(e) => { if (e.target.value !== (m.invoice ?? "")) setInvoice(m, e.target.value); }}
-                          className="mt-1 w-full max-w-[220px] text-[11px] rounded border border-ice/70 px-2 py-1 text-sky" />
+                        <div className="mt-1 flex flex-wrap gap-1.5 items-center">
+                          <input defaultValue={m.invoice ?? ""} key={`inv${m.id}${m.invoice ?? ""}`} placeholder="เลขใบแจ้งหนี้"
+                            onBlur={(e) => { if (e.target.value !== (m.invoice ?? "")) setInvoice(m, e.target.value); }}
+                            className="w-[120px] text-[11px] rounded border border-ice/70 px-2 py-1 text-sky" />
+                          <input type="date" value={m.date_from ?? ""} onChange={(e) => setMsDates(m, "date_from", e.target.value)}
+                            className="text-[10.5px] rounded border border-ice/70 px-1.5 py-1 text-muted" title="วันเริ่ม (แสดงใน Gantt พอร์ทัลลูกค้า)" />
+                          <span className="text-[10px] text-muted/50">→</span>
+                          <input type="date" value={m.date_to ?? ""} onChange={(e) => setMsDates(m, "date_to", e.target.value)}
+                            className="text-[10.5px] rounded border border-ice/70 px-1.5 py-1 text-muted" title="วันสิ้นสุด" />
+                        </div>
                       )}
                     </div>
                     <span className="text-[12px] font-bold text-amber shrink-0">{m.pct}%</span>
@@ -444,7 +509,7 @@ function ProjectsBody() {
         </>
       )}
 
-      <GanttSection />
+      <GanttSection projects={projects} milestones={allMilestones} />
 
       {/* Tickets */}
       <div className="mt-5 card-white overflow-hidden">
