@@ -6,7 +6,8 @@ import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import StaffShell, { useDept } from "@/components/staff/StaffShell";
 import { callCopilot } from "@/lib/copilot";
-import { products, proposals } from "@/lib/staffData";
+import { proposals } from "@/lib/staffData";
+import SignaturePad from "@/components/staff/SignaturePad";
 import { supabase } from "@/lib/supabase";
 
 const fmt = (n: number) => n.toLocaleString("th-TH");
@@ -24,23 +25,68 @@ function useDbDeals() {
   return list;
 }
 
-// ── ใบเสนอราคาจริง — บันทึกลง DB + เลขที่รันอัตโนมัติ + PDF/Excel ──
-type QuoteItem = { code?: string; name: string; unit: string; qty: number; price: number };
+// ── ใบเสนอราคาจริง — บันทึกลง DB + เลขที่รันอัตโนมัติ + รูปสินค้า + ลายเซ็น + PDF/Excel ──
+type QuoteItem = { code?: string; name: string; desc?: string | null; unit: string; qty: number; price: number; image_url?: string | null };
 type DbQuotation = {
   id: number; doc_no: string; deal_id: number | null; customer_name: string;
+  contact_name: string | null; customer_address: string | null; customer_tax_id: string | null;
   items: QuoteItem[]; subtotal: number; discount: number; vat: number; total: number;
-  note: string | null; status: string; created_by: string | null; approved_by: string | null; created_at: string;
+  note: string | null; status: string; created_by: string | null; approved_by: string | null;
+  prepared_sig_url: string | null; prepared_by_name: string | null; created_at: string;
+};
+type DbProductLite = {
+  id: number; code: string; name: string; description: string | null;
+  category: string; unit: string; price: number; image_url: string | null; status: string;
 };
 
 const CO = {
   nameEn: "CONSERTECH CO., LTD.",
-  nameTh: "บริษัท คอนเซอร์เทค จำกัด",
+  nameTh: "บริษัท คันเซอร์เทคซ์ จำกัด",
   addr: "72, 49 หมู่ที่ 3 ถ.เลี่ยงเมืองปากเกร็ด ต.บางตลาด อ.ปากเกร็ด จ.นนทบุรี 11120",
   tel: "062-363-5395",
   email: "sale01@cs-th.com",
+  taxId: "0125568008051",
 };
 
+function useDbProducts() {
+  const [list, setList] = useState<DbProductLite[]>([]);
+  useEffect(() => {
+    supabase?.from("products").select("id,code,name,description,category,unit,price,image_url,status")
+      .eq("status", "ใช้งาน").order("code")
+      .then(({ data }) => setList((data as DbProductLite[]) ?? []));
+  }, []);
+  return list;
+}
+
+const fmtDMY = (d: Date) =>
+  `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
 const dateTh = (iso?: string) => (iso ? new Date(iso) : new Date()).toLocaleDateString("th-TH", { day: "numeric", month: "long", year: "numeric" });
+
+// จำนวนเงินเป็นตัวอักษรภาษาอังกฤษ (ตามฟอร์แมตใบเสนอราคาจริงของบริษัท)
+function numEnWords(n: number): string {
+  const ones = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+  const tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+  const below100 = (x: number): string => x < 20 ? ones[x] : tens[Math.floor(x / 10)] + (x % 10 ? " " + ones[x % 10] : "");
+  const below1000 = (x: number): string => {
+    if (x < 100) return below100(x);
+    return ones[Math.floor(x / 100)] + " Hundred" + (x % 100 ? " And " + below100(x % 100) : "");
+  };
+  if (n === 0) return "Zero";
+  const groups = [[1e9, "Billion"], [1e6, "Million"], [1e3, "Thousand"], [1, ""]] as const;
+  let out = "";
+  for (const [v, label] of groups) {
+    const g = Math.floor(n / v) % 1000;
+    if (g) out += (out ? " " : "") + below1000(g) + (label ? " " + label : "");
+  }
+  return out;
+}
+function bahtWords(total: number): string {
+  const baht = Math.floor(total);
+  const satang = Math.round((total - baht) * 100);
+  let s = numEnWords(baht) + " Baht";
+  if (satang > 0) s += " And " + numEnWords(satang) + " Satang";
+  return `(${s} Only)`;
+}
 
 const statusBadge = (s: string) =>
   s === "อนุมัติแล้ว" ? "bg-[#2E9E5B]/15 text-[#2E9E5B]"
@@ -49,66 +95,102 @@ const statusBadge = (s: string) =>
   : s === "ยกเลิก" ? "bg-[#D94141]/10 text-[#D94141]"
   : "bg-ice text-muted";
 
-// เปิดหน้าต่างพิมพ์ (บันทึกเป็น PDF ได้จากหน้าต่างพิมพ์ของเบราว์เซอร์)
-function printQuotation(q: { doc_no: string; customer_name: string; items: QuoteItem[]; subtotal: number; discount: number; vat: number; total: number; note?: string | null; created_at?: string; status?: string }) {
-  const fmtN = (n: number) => n.toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+type PrintData = {
+  doc_no: string; customer_name: string; contact_name?: string | null; customer_address?: string | null; customer_tax_id?: string | null;
+  items: QuoteItem[]; subtotal: number; discount: number; vat: number; total: number;
+  note?: string | null; created_at?: string;
+  sales_name?: string | null; sales_email?: string | null; sig_url?: string | null;
+};
+
+// เปิดหน้าต่างพิมพ์ (บันทึกเป็น PDF ได้) — ฟอร์แมตตามใบเสนอราคาจริงของบริษัท (มีรูปสินค้า + ลายเซ็น)
+function printQuotation(q: PrintData) {
+  const fmtN = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const created = q.created_at ? new Date(q.created_at) : new Date();
+  const valid = new Date(created.getTime() + 30 * 24 * 3600 * 1000);
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const rows = q.items.map((it, i) => `<tr>
-    <td style="text-align:center">${i + 1}</td>
-    <td>${it.code ? `<span style="color:#5B9BD5;font-size:11px;font-weight:bold">${it.code}</span> ` : ""}${it.name}</td>
-    <td style="text-align:center">${it.unit}</td>
-    <td style="text-align:right">${it.qty.toLocaleString("th-TH")}</td>
-    <td style="text-align:right">${fmtN(it.price)}</td>
-    <td style="text-align:right">${fmtN(it.qty * it.price)}</td>
+    <td style="text-align:center;vertical-align:top;padding-top:12px">${i + 1}</td>
+    <td style="width:74px;text-align:center">${it.image_url ? `<img src="${it.image_url}" style="width:60px;height:60px;object-fit:contain">` : ""}</td>
+    <td style="vertical-align:top;padding-top:12px">
+      <div style="font-weight:700">${esc(it.name)}</div>
+      ${it.desc ? `<div style="font-size:10.5px;color:#4A5E6E;margin-top:2px">${esc(it.desc)}</div>` : ""}
+    </td>
+    <td style="text-align:center;vertical-align:top;padding-top:12px">${it.qty.toLocaleString("en-US")}</td>
+    <td style="text-align:right;vertical-align:top;padding-top:12px">฿${fmtN(it.price)}</td>
+    <td style="text-align:right;vertical-align:top;padding-top:12px">฿${fmtN(it.qty * it.price)}</td>
   </tr>`).join("");
   const html = `<!doctype html><html lang="th"><head><meta charset="utf-8"><title>${q.doc_no}</title>
   <style>
     * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, sans-serif; }
-    body { margin: 0; padding: 28px 36px; color: #12212E; font-size: 13px; }
-    table.items { width: 100%; border-collapse: collapse; margin-top: 14px; }
-    table.items th { background: #0E3A5C; color: #fff; padding: 7px 8px; font-size: 12.5px; }
-    table.items td { border: 1px solid #D7E4F0; padding: 6px 8px; }
-    .totals td { padding: 3px 8px; }
-    @media print { body { padding: 10mm 12mm; } }
+    body { margin: 0; padding: 26px 34px; color: #12212E; font-size: 12.5px; }
+    table.items { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    table.items thead th { background: #1B7FD4; color: #fff; padding: 8px; font-size: 12px; text-align: left; }
+    table.items tbody td { border-bottom: 1px solid #D7E4F0; padding: 8px; }
+    table.items tbody tr:first-child td { border-top: 2px solid #0E3A5C; }
+    .muted { color: #8A9BA8; }
+    @media print { body { padding: 8mm 10mm; } }
   </style></head><body>
   <table style="width:100%"><tr>
-    <td>
-      <div style="font-size:20px;font-weight:800;color:#15659E">${CO.nameEn}</div>
-      <div style="font-weight:600">${CO.nameTh}</div>
-      <div style="color:#4A5E6E;font-size:12px;max-width:340px">${CO.addr}<br>โทร ${CO.tel} · ${CO.email}</div>
+    <td style="width:55%;vertical-align:top">
+      <img src="${location.origin}/logo-consertech.png" style="height:56px" onerror="this.style.display='none'">
+      <div style="margin-top:8px;font-weight:700">${CO.nameTh}</div>
+      <div style="font-size:11.5px;color:#4A5E6E;max-width:330px">${CO.addr}</div>
+      <div style="font-size:11.5px;color:#4A5E6E">Tel: ${CO.tel}</div>
+      <div style="font-size:11.5px;color:#4A5E6E">Tax Id: ${CO.taxId}</div>
     </td>
-    <td style="text-align:right;vertical-align:top">
-      <div style="font-size:22px;font-weight:800;color:#0E3A5C">ใบเสนอราคา / QUOTATION</div>
-      <div style="margin-top:6px">เลขที่: <strong>${q.doc_no}</strong></div>
-      <div>วันที่: ${dateTh(q.created_at)}</div>
+    <td style="vertical-align:top">
+      <div style="background:linear-gradient(90deg,#F0A030 0 8px,#1B7FD4 8px);color:#fff;font-size:22px;font-weight:800;text-align:center;padding:10px 0;border-radius:2px">Quotation</div>
+      <table style="width:100%;font-size:12px;margin-top:10px">
+        <tr><td class="muted" style="width:104px;padding:2px 0">Salesperson</td><td>${esc(q.sales_name ?? "-")}</td></tr>
+        <tr><td class="muted" style="padding:2px 0">Phone</td><td>${CO.tel}</td></tr>
+        <tr><td class="muted" style="padding:2px 0">Email</td><td>${esc(q.sales_email ?? CO.email)}</td></tr>
+        <tr><td colspan="2" style="height:8px"></td></tr>
+        <tr><td class="muted" style="padding:2px 0">Quotation No.</td><td style="font-weight:700">${q.doc_no}</td></tr>
+        <tr><td class="muted" style="padding:2px 0">Quotation Date</td><td>${fmtDMY(created)}</td></tr>
+        <tr><td class="muted" style="padding:2px 0">Valid until</td><td>${fmtDMY(valid)}</td></tr>
+      </table>
     </td>
   </tr></table>
-  <div style="margin-top:14px;border:1px solid #D7E4F0;border-radius:8px;padding:10px 14px">
-    <strong>เรียน:</strong> ${q.customer_name}<br>
-    <span style="color:#4A5E6E;font-size:12px">บริษัทฯ มีความยินดีเสนอราคาสินค้า/บริการ ดังรายการต่อไปนี้</span>
+  <div style="margin-top:14px">
+    ${q.contact_name ? `<div style="font-weight:700">ATTN : ${esc(q.contact_name)}</div>` : ""}
+    <div style="font-weight:800">${esc(q.customer_name)}</div>
+    ${q.customer_address ? `<div style="font-size:11.5px;color:#4A5E6E;max-width:420px">${esc(q.customer_address)}</div>` : ""}
+    ${q.customer_tax_id ? `<div style="font-size:11.5px;color:#4A5E6E">Tax Id: ${esc(q.customer_tax_id)}</div>` : ""}
   </div>
   <table class="items"><thead><tr>
-    <th style="width:36px">ลำดับ</th><th>รายการ</th><th style="width:60px">หน่วย</th><th style="width:64px">จำนวน</th><th style="width:100px">ราคา/หน่วย (฿)</th><th style="width:110px">จำนวนเงิน (฿)</th>
+    <th style="width:34px;text-align:center">No.</th><th colspan="2">Product Name</th>
+    <th style="width:46px;text-align:center">Qty</th><th style="width:92px;text-align:right">Unit Price</th><th style="width:100px;text-align:right">Total</th>
   </tr></thead><tbody>${rows}</tbody></table>
-  <table style="width:100%;margin-top:10px"><tr><td style="vertical-align:top;font-size:12px;color:#4A5E6E">
-    <strong style="color:#12212E">เงื่อนไข</strong><br>
-    · ยืนราคา 30 วันนับจากวันที่เสนอราคา<br>
-    · ราคานี้รวมค่าติดตั้งและทดสอบระบบตามขอบเขตงานที่ระบุ<br>
-    · กำหนดส่งมอบและเงื่อนไขชำระเงินตามที่ตกลงในใบสั่งซื้อ
-    ${q.note ? `<br>· ${q.note}` : ""}
-  </td><td style="width:280px">
-    <table class="totals" style="width:100%">
-      <tr><td>รวมเป็นเงิน</td><td style="text-align:right">${fmtN(q.subtotal)}</td></tr>
-      ${q.discount > 0 ? `<tr><td>ส่วนลด</td><td style="text-align:right">-${fmtN(q.discount)}</td></tr>
-      <tr><td>ยอดหลังหักส่วนลด</td><td style="text-align:right">${fmtN(q.subtotal - q.discount)}</td></tr>` : ""}
-      <tr><td>ภาษีมูลค่าเพิ่ม 7%</td><td style="text-align:right">${fmtN(q.vat)}</td></tr>
-      <tr style="font-weight:800;font-size:15px;color:#0E3A5C"><td style="border-top:2px solid #0E3A5C">จำนวนเงินรวมทั้งสิ้น</td><td style="border-top:2px solid #0E3A5C;text-align:right">${fmtN(q.total)}</td></tr>
-    </table>
-  </td></tr></table>
-  <table style="width:100%;margin-top:44px;text-align:center;font-size:12.5px"><tr>
-    <td style="width:50%">________________________<br>ผู้เสนอราคา<br><span style="color:#4A5E6E">${CO.nameTh}</span></td>
-    <td style="width:50%">________________________<br>ผู้อนุมัติสั่งซื้อ<br><span style="color:#4A5E6E">${q.customer_name}</span></td>
+  <table style="width:100%;margin-top:14px"><tr>
+    <td style="vertical-align:bottom;font-size:12px;font-weight:600;text-align:center">${bahtWords(q.total)}</td>
+    <td style="width:300px">
+      <table style="width:100%;font-size:12.5px">
+        <tr><td style="padding:5px 8px">Subtotal</td><td style="text-align:right;padding:5px 8px">฿${fmtN(q.subtotal)}</td></tr>
+        ${q.discount > 0 ? `<tr><td style="padding:5px 8px">Discount</td><td style="text-align:right;padding:5px 8px">-฿${fmtN(q.discount)}</td></tr>` : ""}
+        <tr><td style="padding:5px 8px;border-bottom:1px solid #D7E4F0">VAT 7%</td><td style="text-align:right;padding:5px 8px;border-bottom:1px solid #D7E4F0">฿${fmtN(q.vat)}</td></tr>
+        <tr style="font-weight:800;font-size:14px"><td style="padding:7px 8px">Grand Total</td><td style="text-align:right;padding:7px 8px">฿${fmtN(q.total)}</td></tr>
+        <tr><td colspan="2" style="border-top:3px double #1B7FD4"></td></tr>
+      </table>
+    </td>
   </tr></table>
-  <script>window.onload = () => setTimeout(() => window.print(), 250);</script>
+  ${q.note ? `<div style="margin-top:10px;font-size:11.5px;color:#4A5E6E"><strong style="color:#12212E">หมายเหตุ:</strong> ${esc(q.note)}</div>` : ""}
+  <table style="width:100%;margin-top:60px;text-align:center;font-size:12px"><tr>
+    <td style="width:50%">
+      <div style="font-weight:600">${CO.nameTh}</div>
+      <div style="height:58px;display:flex;align-items:flex-end;justify-content:center">
+        ${q.sig_url ? `<img src="${q.sig_url}" style="max-height:52px;max-width:190px;object-fit:contain">` : ""}
+      </div>
+      <div style="border-top:1.5px solid #12212E;width:220px;margin:4px auto 0;padding-top:4px" class="muted">Prepared By</div>
+      <div style="font-weight:600">${esc(q.sales_name ?? "")}</div>
+    </td>
+    <td style="width:50%">
+      <div style="font-weight:600">${esc(q.customer_name)}</div>
+      <div style="height:58px"></div>
+      <div style="border-top:1.5px solid #12212E;width:220px;margin:4px auto 0;padding-top:4px" class="muted">Authorized by</div>
+      <div class="muted">(..............................................)</div>
+    </td>
+  </tr></table>
+  <script>window.onload = () => setTimeout(() => window.print(), 400);</script>
   </body></html>`;
   const w = window.open("", "_blank");
   if (!w) { alert("เบราว์เซอร์บล็อกป๊อปอัป — อนุญาตป๊อปอัปเพื่อพิมพ์ PDF"); return; }
@@ -116,27 +198,30 @@ function printQuotation(q: { doc_no: string; customer_name: string; items: Quote
   w.document.close();
 }
 
-async function exportQuotationExcel(q: { doc_no: string; customer_name: string; items: QuoteItem[]; subtotal: number; discount: number; vat: number; total: number; note?: string | null; created_at?: string }) {
+async function exportQuotationExcel(q: PrintData) {
   const XLSX = await import("xlsx");
   const aoa: (string | number)[][] = [
     [CO.nameTh + " — ใบเสนอราคา (QUOTATION)"],
     [CO.addr],
-    [`โทร ${CO.tel} · ${CO.email}`],
+    [`Tel ${CO.tel} · ${CO.email} · Tax Id ${CO.taxId}`],
     [],
-    ["เลขที่เอกสาร", q.doc_no, "", "วันที่", dateTh(q.created_at)],
-    ["ลูกค้า", q.customer_name],
+    ["Quotation No.", q.doc_no, "", "Date", fmtDMY(q.created_at ? new Date(q.created_at) : new Date())],
+    ["ลูกค้า", q.customer_name, "", "ผู้ติดต่อ", q.contact_name ?? "-"],
+    ...(q.customer_address ? [["ที่อยู่", q.customer_address]] : []),
+    ...(q.customer_tax_id ? [["Tax Id ลูกค้า", q.customer_tax_id]] : []),
     [],
-    ["ลำดับ", "รายการ", "หน่วย", "จำนวน", "ราคา/หน่วย (฿)", "จำนวนเงิน (฿)"],
-    ...q.items.map((it, i) => [i + 1, (it.code ? `[${it.code}] ` : "") + it.name, it.unit, it.qty, it.price, it.qty * it.price]),
+    ["No.", "รายการ", "หน่วย", "จำนวน", "ราคา/หน่วย (฿)", "จำนวนเงิน (฿)"],
+    ...q.items.map((it, i) => [i + 1, (it.code ? `[${it.code}] ` : "") + it.name + (it.desc ? ` — ${it.desc}` : ""), it.unit, it.qty, it.price, it.qty * it.price]),
     [],
-    ["", "", "", "", "รวมเป็นเงิน", q.subtotal],
-    ...(q.discount > 0 ? [["", "", "", "", "ส่วนลด", -q.discount], ["", "", "", "", "ยอดหลังหักส่วนลด", q.subtotal - q.discount]] : []),
+    ["", "", "", "", "Subtotal", q.subtotal],
+    ...(q.discount > 0 ? [["", "", "", "", "Discount", -q.discount]] : []),
     ["", "", "", "", "VAT 7%", q.vat],
-    ["", "", "", "", "จำนวนเงินรวมทั้งสิ้น", q.total],
+    ["", "", "", "", "Grand Total", q.total],
+    ["", "", "", "", "", bahtWords(q.total)],
   ];
   if (q.note) aoa.push([], ["หมายเหตุ", q.note]);
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws["!cols"] = [{ wch: 6 }, { wch: 52 }, { wch: 8 }, { wch: 8 }, { wch: 16 }, { wch: 16 }];
+  ws["!cols"] = [{ wch: 6 }, { wch: 60 }, { wch: 8 }, { wch: 8 }, { wch: 15 }, { wch: 16 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, q.doc_no);
   XLSX.writeFile(wb, `${q.doc_no}.xlsx`);
@@ -146,24 +231,39 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
   const { dept, empId } = useDept();
   const canApprove = dept === "management";
   const dbDeals = useDbDeals();
+  const dbProducts = useDbProducts();
+  const [empMap, setEmpMap] = useState<Record<string, { name: string; email: string | null; signature_url: string | null }>>({});
   const [quotes, setQuotes] = useState<DbQuotation[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [docNo, setDocNo] = useState<string | null>(null);
   const [status, setStatus] = useState("ร่าง");
   const [dealId, setDealId] = useState<number | null>(null);
   const [customer, setCustomer] = useState("");
+  const [contactName, setContactName] = useState("");
+  const [custAddr, setCustAddr] = useState("");
+  const [custTaxId, setCustTaxId] = useState("");
   const [items, setItems] = useState<QuoteItem[]>([]);
   const [discount, setDiscount] = useState(0);
   const [note, setNote] = useState("");
+  const [preparedSig, setPreparedSig] = useState<string | null>(null);
+  const [preparedName, setPreparedName] = useState<string | null>(null);
+  const [showPad, setShowPad] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
   const load = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from("quotations").select("*").order("doc_no", { ascending: false });
-    setQuotes((data as DbQuotation[]) ?? []);
+    const [qz, em] = await Promise.all([
+      supabase.from("quotations").select("*").order("doc_no", { ascending: false }),
+      supabase.from("employees").select("id,name,email,signature_url"),
+    ]);
+    setQuotes((qz.data as DbQuotation[]) ?? []);
+    setEmpMap(Object.fromEntries(((em.data as { id: string; name: string; email: string | null; signature_url: string | null }[]) ?? []).map((x) => [x.id, x])));
   };
   useEffect(() => { load(); }, []);
+
+  const me = empMap[empId];
+  const mySig = me?.signature_url ?? null;
 
   const subtotal = items.reduce((a, it) => a + it.qty * it.price, 0);
   const afterDisc = Math.max(0, subtotal - discount);
@@ -172,7 +272,8 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
 
   const resetForm = () => {
     setEditingId(null); setDocNo(null); setStatus("ร่าง");
-    setDealId(null); setCustomer(""); setItems([]); setDiscount(0); setNote(""); setErr("");
+    setDealId(null); setCustomer(""); setContactName(""); setCustAddr(""); setCustTaxId("");
+    setItems([]); setDiscount(0); setNote(""); setPreparedSig(null); setPreparedName(null); setErr("");
   };
 
   const pickDeal = (id: number) => {
@@ -184,9 +285,17 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
   const loadQuote = (q: DbQuotation) => {
     setEditingId(q.id); setDocNo(q.doc_no); setStatus(q.status);
     setDealId(q.deal_id); setCustomer(q.customer_name);
+    setContactName(q.contact_name ?? ""); setCustAddr(q.customer_address ?? ""); setCustTaxId(q.customer_tax_id ?? "");
     setItems(Array.isArray(q.items) ? q.items : []);
-    setDiscount(Number(q.discount) || 0); setNote(q.note ?? ""); setErr("");
+    setDiscount(Number(q.discount) || 0); setNote(q.note ?? "");
+    setPreparedSig(q.prepared_sig_url); setPreparedName(q.prepared_by_name); setErr("");
   };
+
+  const extraFields = () => ({
+    contact_name: contactName.trim() || null,
+    customer_address: custAddr.trim() || null,
+    customer_tax_id: custTaxId.trim() || null,
+  });
 
   const save = async (newStatus?: string) => {
     if (!supabase || !customer.trim() || items.length === 0) {
@@ -204,17 +313,16 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
         if (error) throw error;
         const r = data as { id: number; doc_no: string };
         setEditingId(r.id); setDocNo(r.doc_no);
-        if (newStatus) {
-          await supabase.from("quotations").update({ status: newStatus }).eq("id", r.id);
-          setStatus(newStatus);
-        }
+        const patch: Record<string, unknown> = { ...extraFields() };
+        if (newStatus) { patch.status = newStatus; setStatus(newStatus); }
+        await supabase.from("quotations").update(patch).eq("id", r.id);
         if (dealId !== null) {
           await supabase.from("deal_activities").insert({ deal_id: dealId, emp_id: empId || null, type: "เอกสาร", note: `สร้างใบเสนอราคา ${r.doc_no}` });
         }
       } else {
         const patch: Record<string, unknown> = {
           deal_id: dealId, customer_name: customer.trim(), items,
-          subtotal, discount, vat, total, note: note.trim() || null,
+          subtotal, discount, vat, total, note: note.trim() || null, ...extraFields(),
         };
         if (newStatus) patch.status = newStatus;
         const { error } = await supabase.from("quotations").update(patch).eq("id", editingId);
@@ -238,10 +346,36 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
     load();
   };
 
-  const current = { doc_no: docNo ?? "(ยังไม่บันทึก)", customer_name: customer, items, subtotal, discount, vat, total, note };
+  // เซ็นเอกสาร — ใช้ลายเซ็นที่บันทึกไว้ หรือเปิดแผ่นเซ็นถ้ายังไม่มี
+  const applySignature = async (url: string) => {
+    if (!supabase || editingId === null) return;
+    const name = me?.name ?? "";
+    await supabase.from("quotations").update({ prepared_sig_url: url, prepared_by_name: name }).eq("id", editingId);
+    setPreparedSig(url); setPreparedName(name);
+    setShowPad(false);
+    load();
+  };
+  const signDoc = () => {
+    if (editingId === null) { setErr("บันทึกเอกสารก่อนจึงจะเซ็นได้"); return; }
+    if (mySig) applySignature(mySig);
+    else setShowPad(true);
+  };
+
+  const printData = (q?: DbQuotation): PrintData => {
+    if (q) {
+      const creator = q.created_by ? empMap[q.created_by] : undefined;
+      return { ...q, sales_name: q.prepared_by_name ?? creator?.name ?? null, sales_email: creator?.email ?? null, sig_url: q.prepared_sig_url };
+    }
+    return {
+      doc_no: docNo ?? "(ยังไม่บันทึก)", customer_name: customer, contact_name: contactName, customer_address: custAddr, customer_tax_id: custTaxId,
+      items, subtotal, discount, vat, total, note,
+      sales_name: preparedName ?? me?.name ?? null, sales_email: me?.email ?? null, sig_url: preparedSig,
+    };
+  };
 
   return (
     <div className="grid gap-5 min-[1040px]:grid-cols-[1fr_360px] items-start">
+      {showPad && <SignaturePad empId={empId} onSaved={applySignature} onCancel={() => setShowPad(false)} />}
       <div className="card-white p-5 min-w-0">
         <div className="flex flex-wrap justify-between gap-2">
           <div>
@@ -266,17 +400,32 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
             </select>
           </div>
           <div>
-            <label className="text-[11.5px] font-bold text-muted">ลูกค้า</label>
-            <input value={customer} onChange={(e) => setCustomer(e.target.value)} disabled={readOnly} placeholder="ชื่อบริษัทลูกค้า"
+            <label className="text-[11.5px] font-bold text-muted">ลูกค้า (ชื่อบริษัท) *</label>
+            <input value={customer} onChange={(e) => setCustomer(e.target.value)} disabled={readOnly} placeholder="เช่น THE NAWALOHA INDUSTRY COMPANY LIMITED"
+              className="mt-1 w-full text-[13px] rounded-lg border border-ice px-3 py-2" />
+          </div>
+          <div>
+            <label className="text-[11.5px] font-bold text-muted">ผู้ติดต่อ (ATTN)</label>
+            <input value={contactName} onChange={(e) => setContactName(e.target.value)} disabled={readOnly} placeholder="ชื่อผู้ติดต่อฝั่งลูกค้า"
+              className="mt-1 w-full text-[13px] rounded-lg border border-ice px-3 py-2" />
+          </div>
+          <div>
+            <label className="text-[11.5px] font-bold text-muted">Tax ID ลูกค้า</label>
+            <input value={custTaxId} onChange={(e) => setCustTaxId(e.target.value)} disabled={readOnly} placeholder="เลขผู้เสียภาษี 13 หลัก"
+              className="mt-1 w-full text-[13px] rounded-lg border border-ice px-3 py-2" />
+          </div>
+          <div className="sm:col-span-2">
+            <label className="text-[11.5px] font-bold text-muted">ที่อยู่ลูกค้า</label>
+            <input value={custAddr} onChange={(e) => setCustAddr(e.target.value)} disabled={readOnly} placeholder="ที่อยู่สำหรับออกเอกสาร"
               className="mt-1 w-full text-[13px] rounded-lg border border-ice px-3 py-2" />
           </div>
         </div>
 
         <div className="overflow-x-auto mt-4 -mx-1 px-1">
-        <table className="w-full min-w-[470px] text-[13px]">
+        <table className="w-full min-w-[520px] text-[13px]">
           <thead>
             <tr className="bg-ice/70 text-navy">
-              <th className="text-left px-3 py-2 font-bold">รายการ</th>
+              <th className="text-left px-3 py-2 font-bold" colSpan={2}>รายการ</th>
               <th className="text-right px-2 py-2 font-bold w-16">จำนวน</th>
               <th className="text-right px-2 py-2 font-bold w-24">ราคา/หน่วย</th>
               <th className="text-right px-3 py-2 font-bold w-28">รวม</th>
@@ -286,12 +435,21 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
           <tbody>
             {items.map((it, i) => (
               <tr key={i} className={i % 2 ? "bg-ice/30" : ""}>
-                <td className="px-3 py-2">
+                <td className="pl-3 py-2 w-12">
+                  {it.image_url
+                    // eslint-disable-next-line @next/next/no-img-element
+                    ? <img src={it.image_url} alt="" className="w-10 h-10 object-contain bg-white border border-ice rounded" />
+                    : <div className="w-10 h-10 rounded bg-ice/70 flex items-center justify-center text-[15px]">📦</div>}
+                </td>
+                <td className="px-2 py-2">
                   {it.code && <span className="text-[10.5px] text-sky font-bold mr-1.5">{it.code}</span>}
-                  {readOnly || it.code ? it.name : (
+                  {readOnly || it.code ? (
+                    <span className="font-semibold text-navy">{it.name}</span>
+                  ) : (
                     <input value={it.name} onChange={(e) => setItems(items.map((x, j) => j === i ? { ...x, name: e.target.value } : x))}
-                      className="w-full rounded border border-ice px-1.5 py-0.5" />
+                      placeholder="ชื่อรายการ" className="w-full rounded border border-ice px-1.5 py-0.5" />
                   )}
+                  {it.desc && <p className="text-[11px] text-muted/80 leading-snug mt-0.5">{it.desc}</p>}
                 </td>
                 <td className="text-right px-2 py-2">
                   <input type="number" min={1} value={it.qty} disabled={readOnly}
@@ -312,7 +470,7 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
               </tr>
             ))}
             {items.length === 0 && (
-              <tr><td colSpan={readOnly ? 4 : 5} className="px-3 py-6 text-center text-muted/70 text-[12.5px]">ยังไม่มีรายการ — เพิ่มจากข้อมูล Master หรือพิมพ์รายการเองด้านล่าง</td></tr>
+              <tr><td colSpan={readOnly ? 5 : 6} className="px-3 py-6 text-center text-muted/70 text-[12.5px]">ยังไม่มีรายการ — เพิ่มจากข้อมูล Master หรือพิมพ์รายการเองด้านล่าง</td></tr>
             )}
           </tbody>
         </table>
@@ -324,13 +482,13 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
               className="max-w-full text-[13px] rounded-lg border border-dashed border-sky px-3 py-2 bg-white text-sky"
               value=""
               onChange={(e) => {
-                const p = products.find((x) => x.code === e.target.value);
-                if (p) setItems([...items, { code: p.code, name: p.name, unit: p.unit, qty: 1, price: p.price }]);
+                const p = dbProducts.find((x) => x.code === e.target.value);
+                if (p) setItems([...items, { code: p.code, name: p.name, desc: p.description, unit: p.unit, qty: 1, price: p.price, image_url: p.image_url }]);
               }}
             >
               <option value="">＋ เพิ่มรายการจากข้อมูล Master...</option>
-              {products.filter((p) => !items.some((it) => it.code === p.code)).map((p) => (
-                <option key={p.code} value={p.code}>{p.code} — {p.name} ({fmt(p.price)}฿)</option>
+              {dbProducts.filter((p) => !items.some((it) => it.code === p.code)).map((p) => (
+                <option key={p.id} value={p.code}>{p.code} — {p.name} ({fmt(p.price)}฿)</option>
               ))}
             </select>
             <button onClick={() => setItems([...items, { name: "", unit: "งาน", qty: 1, price: 0 }])}
@@ -359,6 +517,29 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
           </div>
         </div>
 
+        {/* ลายเซ็นผู้เสนอราคา */}
+        <div className="mt-3 rounded-xl bg-ice/40 px-3.5 py-2.5 flex flex-wrap items-center gap-3 text-[12.5px]">
+          <strong className="text-navy">🖊 ลายเซ็นผู้เสนอราคา:</strong>
+          {preparedSig ? (
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={preparedSig} alt="ลายเซ็น" className="h-10 bg-white border border-ice rounded px-2 object-contain" />
+              <span className="text-muted">เซ็นแล้วโดย {preparedName}</span>
+              {!readOnly && <button onClick={() => setShowPad(true)} className="text-sky font-semibold hover:text-brand">เซ็นใหม่</button>}
+            </>
+          ) : (
+            <>
+              <span className="text-muted">ยังไม่ได้เซ็น</span>
+              {!readOnly && (
+                <button onClick={signDoc} disabled={editingId === null} title={editingId === null ? "บันทึกเอกสารก่อน" : ""}
+                  className="btn btn-outline text-[12px] py-1.5 px-3 disabled:opacity-50">
+                  {mySig ? "กดเซ็นด้วยลายเซ็นของฉัน" : "สร้างลายเซ็น + เซ็นเอกสาร"}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+
         {err && <p className="mt-2 text-[12.5px] text-[#D94141] bg-[#D94141]/10 rounded-lg px-3 py-2">⚠ {err}</p>}
 
         <div className="mt-4 flex flex-wrap gap-2">
@@ -378,10 +559,10 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
               )}
             </>
           )}
-          <button onClick={() => printQuotation({ ...current, created_at: undefined })} disabled={items.length === 0} className="btn btn-outline text-[13.5px] py-2 disabled:opacity-50">🖨 PDF</button>
-          <button onClick={() => exportQuotationExcel({ ...current, created_at: undefined })} disabled={items.length === 0} className="btn btn-outline text-[13.5px] py-2 disabled:opacity-50">⬇ Excel</button>
+          <button onClick={() => printQuotation(printData())} disabled={items.length === 0} className="btn btn-outline text-[13.5px] py-2 disabled:opacity-50">🖨 PDF</button>
+          <button onClick={() => exportQuotationExcel(printData())} disabled={items.length === 0} className="btn btn-outline text-[13.5px] py-2 disabled:opacity-50">⬇ Excel</button>
         </div>
-        <p className="mt-3 text-[11px] text-muted/70 italic">* PDF เปิดหน้าต่างพิมพ์ — เลือก &ldquo;Save as PDF&rdquo; ได้เลย · เลขที่เอกสารรันต่อเนื่องอัตโนมัติจากฐานข้อมูล</p>
+        <p className="mt-3 text-[11px] text-muted/70 italic">* PDF เปิดหน้าต่างพิมพ์ — เลือก &ldquo;Save as PDF&rdquo; ได้เลย · เลขที่เอกสารรันต่อเนื่องอัตโนมัติจากฐานข้อมูล · รูปสินค้าและลายเซ็นแสดงในเอกสารอัตโนมัติ</p>
       </div>
 
       {/* ทะเบียนใบเสนอราคาจริงจาก DB */}
@@ -392,7 +573,7 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
             <div key={q.id} className={`rounded-lg border p-3 text-[12.5px] cursor-pointer transition ${editingId === q.id ? "border-brand shadow-sm" : "border-ice hover:border-brand"}`}
               onClick={() => loadQuote(q)}>
               <div className="flex justify-between font-bold text-navy">
-                <span>{q.doc_no}</span><span>{fmt(Math.round(Number(q.total)))}฿</span>
+                <span>{q.doc_no}{q.prepared_sig_url && <span title="เซ็นแล้ว" className="ml-1">🖊</span>}</span><span>{fmt(Math.round(Number(q.total)))}฿</span>
               </div>
               <p className="text-muted mt-0.5">{q.customer_name}</p>
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
@@ -402,8 +583,8 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
                   <button onClick={(e) => { e.stopPropagation(); setQuoteStatus(q, "อนุมัติแล้ว"); }}
                     className="ml-auto text-[10.5px] font-bold bg-[#2E9E5B]/15 text-[#2E9E5B] rounded px-1.5 py-0.5 hover:bg-[#2E9E5B]/25">✓ อนุมัติ</button>
                 )}
-                <button onClick={(e) => { e.stopPropagation(); printQuotation(q); }} className="text-[10.5px] font-bold bg-ice text-navy rounded px-1.5 py-0.5 hover:bg-sky/20">🖨</button>
-                <button onClick={(e) => { e.stopPropagation(); exportQuotationExcel(q); }} className="text-[10.5px] font-bold bg-ice text-navy rounded px-1.5 py-0.5 hover:bg-sky/20">⬇ xlsx</button>
+                <button onClick={(e) => { e.stopPropagation(); printQuotation(printData(q)); }} className="text-[10.5px] font-bold bg-ice text-navy rounded px-1.5 py-0.5 hover:bg-sky/20">🖨</button>
+                <button onClick={(e) => { e.stopPropagation(); exportQuotationExcel(printData(q)); }} className="text-[10.5px] font-bold bg-ice text-navy rounded px-1.5 py-0.5 hover:bg-sky/20">⬇ xlsx</button>
               </div>
             </div>
           ))}
