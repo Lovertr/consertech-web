@@ -88,10 +88,11 @@ function AiSummary({ deal, acts }: { deal: DbDeal; acts: DbActivity[] }) {
 }
 
 // ── สแกนนามบัตรด้วย AI → เพิ่มเป็น Lead จริงในฐานข้อมูล ──
-function BizCardScan({ onAddLead }: { onAddLead: (f: Record<string, string | null>) => Promise<void> }) {
+function BizCardScan({ onAddLead, addLabel = "＋ เพิ่มเป็น Lead ใหม่" }: { onAddLead: (f: Record<string, string | null>) => Promise<string | void>; addLabel?: string }) {
   const [state, setState] = useState<"idle" | "scanning" | "done" | "adding" | "added" | "error">("idle");
   const [fields, setFields] = useState<Record<string, string | null>>({});
   const [err, setErr] = useState("");
+  const [doneMsg, setDoneMsg] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const scan = (file: File) => {
@@ -123,7 +124,8 @@ function BizCardScan({ onAddLead }: { onAddLead: (f: Record<string, string | nul
   const addLead = async () => {
     setState("adding");
     try {
-      await onAddLead(fields);
+      const msg = await onAddLead(fields);
+      setDoneMsg(typeof msg === "string" ? msg : "✅ เพิ่มแล้ว");
       setState("added");
     } catch (e) {
       setErr(String(e));
@@ -151,10 +153,10 @@ function BizCardScan({ onAddLead }: { onAddLead: (f: Record<string, string | nul
           <span><strong className="text-navy">อีเมล:</strong> {fields.email ?? "-"}</span>
           {fields.line_id && <span><strong className="text-navy">LINE:</strong> {fields.line_id}</span>}
           {state === "added" ? (
-            <span className="ml-auto text-[12px] font-bold text-[#2E9E5B]">✅ เพิ่มเป็น Lead แล้ว</span>
+            <span className="ml-auto text-[12px] font-bold text-[#2E9E5B]">{doneMsg}</span>
           ) : (
             <button onClick={addLead} disabled={state === "adding"} className="btn btn-primary text-[11.5px] py-1 px-2.5 ml-auto disabled:opacity-60">
-              {state === "adding" ? "กำลังบันทึก..." : "＋ เพิ่มเป็น Lead ใหม่"}
+              {state === "adding" ? "กำลังบันทึก..." : addLabel}
             </button>
           )}
         </div>
@@ -162,6 +164,37 @@ function BizCardScan({ onAddLead }: { onAddLead: (f: Record<string, string | nul
       {state === "error" && <p className="mt-2 text-[12.5px] text-[#D94141]">⚠ {err}</p>}
     </div>
   );
+}
+
+// นามบัตร 1 ใบ = ผู้ติดต่อ 1 คน — ถ้าบริษัทมีอยู่แล้วเพิ่มเป็นผู้ติดต่อ ถ้ายังไม่มีสร้างบริษัทใหม่ให้ด้วย
+async function upsertFromCard(f: Record<string, string | null>): Promise<{ customerId: number; createdCompany: boolean; companyName: string; contactName: string | null }> {
+  if (!supabase) throw new Error("ยังไม่ได้เชื่อมต่อฐานข้อมูล");
+  const companyName = (f.company_name ?? "").trim() || [f.first_name, f.last_name].filter(Boolean).join(" ").trim() || "ลูกค้าใหม่ (จากนามบัตร)";
+  const contactName = [f.first_name, f.last_name].filter(Boolean).join(" ").trim() || null;
+  const { data: found } = await supabase.from("customers").select("id,name,contact_name").ilike("name", companyName).limit(1);
+  const existing = found?.[0] ?? null;
+  let customerId: number;
+  let createdCompany = false;
+  if (existing) {
+    customerId = existing.id;
+    if (!existing.contact_name && contactName) {
+      await supabase.from("customers").update({ contact_name: contactName, phone: f.phone ?? null, email: f.email ?? null }).eq("id", customerId);
+    }
+  } else {
+    const { data: cust, error } = await supabase.from("customers").insert({
+      name: companyName, contact_name: contactName, phone: f.phone ?? null, email: f.email ?? null, line_id: f.line_id ?? null,
+    }).select("id").single();
+    if (error) throw error;
+    customerId = cust.id;
+    createdCompany = true;
+  }
+  if (contactName) {
+    await supabase.from("customer_contacts").insert({
+      customer_id: customerId, name: contactName, position: f.position ?? null,
+      phone: f.phone ?? null, email: f.email ?? null, line_id: f.line_id ?? null,
+    });
+  }
+  return { customerId, createdCompany, companyName, contactName };
 }
 
 // ── ฟอร์มเพิ่มดีลใหม่ ──
@@ -517,21 +550,18 @@ function CrmBody() {
 
   const addLeadFromCard = async (f: Record<string, string | null>) => {
     if (!supabase) throw new Error("ยังไม่ได้เชื่อมต่อฐานข้อมูล");
-    const companyName = f.company_name || [f.first_name, f.last_name].filter(Boolean).join(" ") || "ลูกค้าใหม่ (จากนามบัตร)";
-    const contact = [f.first_name, f.last_name].filter(Boolean).join(" ") || null;
-    const { data: cust, error } = await supabase.from("customers").insert({
-      name: companyName, contact_name: contact, phone: f.phone ?? null, email: f.email ?? null,
-      line_id: f.line_id ?? null, note: f.position ? `ตำแหน่งผู้ติดต่อ: ${f.position}` : null,
-    }).select("id").single();
-    if (error) throw error;
+    const r = await upsertFromCard(f);
     const { data: deal, error: e2 } = await supabase.from("deals").insert({
-      customer_id: cust.id, customer_name: companyName, stage: "lead", value_level: "กลาง",
+      customer_id: r.customerId, customer_name: r.companyName, stage: "lead", value_level: "กลาง",
       owner: empId || null, next_action: "โทรแนะนำบริษัทและคัดกรองความต้องการ",
     }).select("id").single();
     if (e2) throw e2;
     await supabase.from("deal_activities").insert({ deal_id: deal.id, emp_id: empId || null, type: "Lead", note: "เพิ่มจากสแกนนามบัตรด้วย AI" });
     await load();
     setSelectedId(deal.id);
+    return r.createdCompany
+      ? `✅ เพิ่มบริษัทใหม่ + ผู้ติดต่อ + Lead แล้ว`
+      : `✅ บริษัทมีอยู่แล้ว — เพิ่ม "${r.contactName ?? "ผู้ติดต่อ"}" เป็นผู้ติดต่อ + สร้าง Lead ใหม่`;
   };
 
   if (!supabase) {
@@ -618,10 +648,287 @@ function CrmBody() {
   );
 }
 
+// ── แท็บจัดการลูกค้า — บริษัท + ผู้ติดต่อหลายคน + แผนที่ + ดีลที่เกี่ยวข้อง ──
+type DbCustomerFull = {
+  id: number; name: string; industry: string | null; contact_name: string | null;
+  phone: string | null; email: string | null; line_id: string | null; note: string | null;
+  address: string | null; map_url: string | null; created_at: string;
+};
+type DbContact = { id: number; customer_id: number; name: string; position: string | null; phone: string | null; email: string | null; line_id: string | null };
+
+function CustomersTab() {
+  const { access } = useDept();
+  const readOnly = access("crm") === "read";
+  const [customers, setCustomers] = useState<DbCustomerFull[]>([]);
+  const [contacts, setContacts] = useState<DbContact[]>([]);
+  const [custDeals, setCustDeals] = useState<DbDeal[]>([]);
+  const [q, setQ] = useState("");
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [adding, setAdding] = useState(false);
+  // ฟอร์มแก้ไขบริษัท
+  const [edit, setEdit] = useState<Partial<DbCustomerFull>>({});
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+  // ฟอร์มผู้ติดต่อ
+  const [cName, setCName] = useState(""); const [cPos, setCPos] = useState("");
+  const [cPhone, setCPhone] = useState(""); const [cEmail, setCEmail] = useState(""); const [cLine, setCLine] = useState("");
+
+  const load = useCallback(async () => {
+    if (!supabase) return;
+    const [c, ct, d] = await Promise.all([
+      supabase.from("customers").select("*").order("name"),
+      supabase.from("customer_contacts").select("*").order("created_at"),
+      supabase.from("deals").select("*").order("created_at", { ascending: false }),
+    ]);
+    const list = (c.data as DbCustomerFull[]) ?? [];
+    setCustomers(list);
+    setContacts((ct.data as DbContact[]) ?? []);
+    setCustDeals((d.data as DbDeal[]) ?? []);
+    setSelectedId((prev) => (prev !== null && list.some((x) => x.id === prev) ? prev : list[0]?.id ?? null));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const selected = customers.find((c) => c.id === selectedId) ?? null;
+  useEffect(() => {
+    if (selected) setEdit({ name: selected.name, industry: selected.industry, address: selected.address, map_url: selected.map_url, note: selected.note });
+    setMsg("");
+  }, [selectedId, selected?.name, selected?.industry, selected?.address, selected?.map_url, selected?.note]);
+
+  const selContacts = contacts.filter((c) => c.customer_id === selectedId);
+  const selDeals = selected ? custDeals.filter((d) => d.customer_id === selected.id || d.customer_name === selected.name) : [];
+  const list = customers.filter((c) =>
+    !q.trim() || (c.name + " " + (c.industry ?? "") + " " + contacts.filter((x) => x.customer_id === c.id).map((x) => x.name).join(" ")).toLowerCase().includes(q.trim().toLowerCase()));
+
+  const scanCard = async (f: Record<string, string | null>) => {
+    const r = await upsertFromCard(f);
+    await load();
+    setSelectedId(r.customerId);
+    return r.createdCompany
+      ? `✅ เพิ่มบริษัท "${r.companyName}" + ผู้ติดต่อแล้ว`
+      : `✅ บริษัทมีอยู่แล้ว — เพิ่ม "${r.contactName ?? "ผู้ติดต่อ"}" เป็นผู้ติดต่อของ ${r.companyName}`;
+  };
+
+  const addCustomer = async () => {
+    if (!supabase || !String(edit.name ?? "").trim()) return;
+    setSaving(true);
+    const { data, error } = await supabase.from("customers").insert({
+      name: String(edit.name).trim(), industry: edit.industry || null, address: edit.address || null,
+      map_url: edit.map_url || null, note: edit.note || null,
+    }).select("id").single();
+    setSaving(false);
+    if (error) { setMsg("⚠ " + error.message); return; }
+    setAdding(false);
+    await load();
+    setSelectedId(data.id);
+  };
+
+  const saveCustomer = async () => {
+    if (!supabase || !selected || !String(edit.name ?? "").trim()) return;
+    setSaving(true);
+    await supabase.from("customers").update({
+      name: String(edit.name).trim(), industry: edit.industry || null, address: edit.address || null,
+      map_url: edit.map_url || null, note: edit.note || null,
+    }).eq("id", selected.id);
+    setSaving(false); setMsg("✅ บันทึกแล้ว");
+    load();
+  };
+
+  const removeCustomer = async () => {
+    if (!supabase || !selected) return;
+    if (!confirm(`ลบลูกค้า "${selected.name}"?\n(ผู้ติดต่อทั้งหมดจะถูกลบด้วย — ดีลที่มีอยู่จะไม่ถูกลบ)`)) return;
+    await supabase.from("customers").delete().eq("id", selected.id);
+    setSelectedId(null);
+    load();
+  };
+
+  const addContact = async () => {
+    if (!supabase || !selected || !cName.trim()) return;
+    await supabase.from("customer_contacts").insert({
+      customer_id: selected.id, name: cName.trim(), position: cPos.trim() || null,
+      phone: cPhone.trim() || null, email: cEmail.trim() || null, line_id: cLine.trim() || null,
+    });
+    if (!selected.contact_name) {
+      await supabase.from("customers").update({ contact_name: cName.trim(), phone: cPhone.trim() || null, email: cEmail.trim() || null }).eq("id", selected.id);
+    }
+    setCName(""); setCPos(""); setCPhone(""); setCEmail(""); setCLine("");
+    load();
+  };
+
+  const delContact = async (id: number) => {
+    if (!supabase) return;
+    await supabase.from("customer_contacts").delete().eq("id", id);
+    load();
+  };
+
+  const editForm = (isNew: boolean) => (
+    <div className="grid gap-2.5 sm:grid-cols-2">
+      <div>
+        <label className="text-[11.5px] font-bold text-muted">ชื่อบริษัท *</label>
+        <input value={String(edit.name ?? "")} onChange={(e) => setEdit({ ...edit, name: e.target.value })} disabled={readOnly}
+          className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
+      </div>
+      <div>
+        <label className="text-[11.5px] font-bold text-muted">อุตสาหกรรม</label>
+        <input value={String(edit.industry ?? "")} onChange={(e) => setEdit({ ...edit, industry: e.target.value })} disabled={readOnly}
+          placeholder="เช่น ยานยนต์ / โลจิสติกส์" className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
+      </div>
+      <div className="sm:col-span-2">
+        <label className="text-[11.5px] font-bold text-muted">ที่อยู่</label>
+        <input value={String(edit.address ?? "")} onChange={(e) => setEdit({ ...edit, address: e.target.value })} disabled={readOnly}
+          className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
+      </div>
+      <div className="sm:col-span-2">
+        <label className="text-[11.5px] font-bold text-muted">ลิงก์ Google Maps (คัดลอกลิงก์แชร์จาก Google Maps มาวาง)</label>
+        <input value={String(edit.map_url ?? "")} onChange={(e) => setEdit({ ...edit, map_url: e.target.value })} disabled={readOnly}
+          placeholder="https://maps.app.goo.gl/..." className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
+      </div>
+      <div className="sm:col-span-2">
+        <label className="text-[11.5px] font-bold text-muted">โน้ต</label>
+        <input value={String(edit.note ?? "")} onChange={(e) => setEdit({ ...edit, note: e.target.value })} disabled={readOnly}
+          className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
+      </div>
+      {!readOnly && (
+        <div className="sm:col-span-2 flex gap-2 items-center">
+          <button onClick={isNew ? addCustomer : saveCustomer} disabled={saving} className="btn btn-primary text-[13px] py-2 px-4 disabled:opacity-50">
+            {saving ? "กำลังบันทึก..." : isNew ? "เพิ่มลูกค้า" : "บันทึกการแก้ไข"}
+          </button>
+          {isNew && <button onClick={() => setAdding(false)} className="btn btn-outline text-[13px] py-2 px-4">ยกเลิก</button>}
+          {msg && <span className={`text-[12.5px] font-semibold ${msg.startsWith("✅") ? "text-[#2E9E5B]" : "text-[#D94141]"}`}>{msg}</span>}
+        </div>
+      )}
+    </div>
+  );
+
+  if (!supabase) {
+    return <p className="text-[13px] text-muted bg-ice/50 rounded-lg px-3 py-2 inline-block">⚠ ยังไม่ได้เชื่อมต่อฐานข้อมูล</p>;
+  }
+
+  return (
+    <>
+      {!readOnly && <BizCardScan onAddLead={scanCard} addLabel="＋ บันทึกเข้าระบบลูกค้า" />}
+      <div className="grid gap-5 min-[1040px]:grid-cols-[320px_1fr] items-start">
+        {/* รายชื่อบริษัท */}
+        <div className="card-white p-4 min-w-0">
+          <div className="flex items-center justify-between gap-2">
+            <p className="font-bold text-navy text-[14px]">ลูกค้า <span className="text-sky text-[12px]">({customers.length})</span></p>
+            {!readOnly && !adding && (
+              <button onClick={() => { setAdding(true); setEdit({}); setMsg(""); }} className="btn btn-primary text-[12px] py-1.5 px-2.5">＋ เพิ่มเอง</button>
+            )}
+          </div>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 ค้นหาบริษัท/ผู้ติดต่อ..."
+            className="mt-2.5 w-full rounded-lg border border-ice px-3 py-2 text-[12.5px]" />
+          <div className="mt-2.5 space-y-2 max-h-[520px] overflow-y-auto pr-1">
+            {list.map((c) => {
+              const n = contacts.filter((x) => x.customer_id === c.id).length;
+              const nd = custDeals.filter((d) => d.customer_id === c.id || d.customer_name === c.name).length;
+              return (
+                <button key={c.id} onClick={() => { setSelectedId(c.id); setAdding(false); }}
+                  className={`w-full text-left rounded-xl border p-3 transition text-[12.5px] ${selectedId === c.id && !adding ? "border-brand bg-ice/40" : "border-ice hover:border-brand"}`}>
+                  <p className="font-bold text-navy leading-snug">{c.name}</p>
+                  <p className="text-[11px] text-muted/80 mt-0.5">
+                    {c.industry ?? "-"} · 👤 {n} · 🤝 {nd} ดีล{c.map_url && " · 📍"}
+                  </p>
+                </button>
+              );
+            })}
+            {list.length === 0 && <p className="text-[12.5px] text-muted/70">ไม่พบลูกค้า</p>}
+          </div>
+        </div>
+
+        {/* รายละเอียด */}
+        <div className="space-y-4 min-w-0">
+          {adding ? (
+            <div className="card-white p-5">
+              <p className="font-bold text-navy text-[15px] mb-3">เพิ่มลูกค้าใหม่ (กรอกเอง)</p>
+              {editForm(true)}
+            </div>
+          ) : selected ? (
+            <>
+              <div className="card-white p-5">
+                <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
+                  <p className="font-bold text-navy text-[16px]">{selected.name}</p>
+                  <div className="flex gap-2">
+                    {selected.map_url && (
+                      <a href={selected.map_url} target="_blank" rel="noreferrer" className="btn btn-outline text-[12px] py-1.5 px-3">📍 เปิดแผนที่</a>
+                    )}
+                    {!readOnly && <button onClick={removeCustomer} className="text-[12px] font-semibold text-[#D94141]/70 hover:text-[#D94141] px-1">🗑 ลบ</button>}
+                  </div>
+                </div>
+                {editForm(false)}
+              </div>
+
+              {/* ผู้ติดต่อ */}
+              <div className="card-white p-5">
+                <p className="font-bold text-navy text-[14.5px]">👤 ผู้ติดต่อ <span className="text-sky text-[12px]">({selContacts.length})</span></p>
+                <div className="mt-3 grid gap-2 min-[700px]:grid-cols-2">
+                  {selContacts.map((c) => (
+                    <div key={c.id} className="rounded-xl border border-ice p-3 text-[12.5px] relative group">
+                      <p className="font-bold text-navy">{c.name}</p>
+                      {c.position && <p className="text-muted">{c.position}</p>}
+                      <p className="text-[11.5px] text-muted/80 mt-1">
+                        {[c.phone && `📞 ${c.phone}`, c.email && `✉ ${c.email}`, c.line_id && `LINE: ${c.line_id}`].filter(Boolean).join(" · ") || "—"}
+                      </p>
+                      {!readOnly && (
+                        <button onClick={() => delContact(c.id)}
+                          className="absolute top-2 right-2 text-muted/40 hover:text-[#D94141] opacity-0 group-hover:opacity-100">✕</button>
+                      )}
+                    </div>
+                  ))}
+                  {selContacts.length === 0 && <p className="text-[12.5px] text-muted/70">ยังไม่มีผู้ติดต่อ — สแกนนามบัตรด้านบน หรือกรอกด้านล่าง</p>}
+                </div>
+                {!readOnly && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <input value={cName} onChange={(e) => setCName(e.target.value)} placeholder="ชื่อผู้ติดต่อ *" className="rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px] w-36" />
+                    <input value={cPos} onChange={(e) => setCPos(e.target.value)} placeholder="ตำแหน่ง" className="rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px] w-32" />
+                    <input value={cPhone} onChange={(e) => setCPhone(e.target.value)} placeholder="โทร" className="rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px] w-32" />
+                    <input value={cEmail} onChange={(e) => setCEmail(e.target.value)} placeholder="อีเมล" className="rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px] w-44" />
+                    <input value={cLine} onChange={(e) => setCLine(e.target.value)} placeholder="LINE" className="rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px] w-28" />
+                    <button onClick={addContact} disabled={!cName.trim()} className="btn btn-primary text-[12.5px] py-1.5 px-3 disabled:opacity-50">＋ เพิ่ม</button>
+                  </div>
+                )}
+              </div>
+
+              {/* ดีลของบริษัทนี้ */}
+              <div className="card-white p-5">
+                <p className="font-bold text-navy text-[14.5px]">🤝 ดีลกับบริษัทนี้ <span className="text-sky text-[12px]">({selDeals.length})</span></p>
+                <div className="mt-3 space-y-2">
+                  {selDeals.map((d) => (
+                    <div key={d.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-ice p-3 text-[12.5px]">
+                      <span className="font-bold text-sky">{dealCode(d.id)}</span>
+                      <span className="text-ink flex-1 min-w-[140px]">{d.solution ?? "ยังไม่ระบุโซลูชัน"}</span>
+                      {d.lead_score !== null && <span className="text-[10.5px] font-bold bg-ice text-navy rounded px-1.5 py-0.5">🎯 {d.lead_score}</span>}
+                      <span className={`text-[10.5px] font-bold rounded px-1.5 py-0.5 ${
+                        d.stage === "won" ? "bg-[#2E9E5B]/15 text-[#2E9E5B]" : d.stage === "lost" ? "bg-[#D94141]/10 text-[#D94141]" : "bg-amber/15 text-amber"
+                      }`}>{STAGES.find((s) => s.key === d.stage)?.label ?? d.stage}</span>
+                      <span className="text-[10.5px] font-bold bg-ice text-sky rounded px-1.5 py-0.5">มูลค่า{d.value_level}</span>
+                    </div>
+                  ))}
+                  {selDeals.length === 0 && <p className="text-[12.5px] text-muted/70">ยังไม่มีดีลกับบริษัทนี้ — สร้างได้ที่แท็บ Pipeline ดีล</p>}
+                </div>
+              </div>
+            </>
+          ) : (
+            <p className="card-white p-8 text-center text-[13px] text-muted/70">เลือกลูกค้าจากรายชื่อด้านซ้าย</p>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function CrmPage() {
+  const [tab, setTab] = useState<"pipeline" | "customers">("pipeline");
   return (
     <StaffShell title="CRM / ดีล">
-      <CrmBody />
+      <div className="flex gap-1 mb-4 bg-ice rounded-xl p-1 w-fit">
+        {([["pipeline", "Pipeline ดีล"], ["customers", "จัดการลูกค้า"]] as const).map(([k, label]) => (
+          <button key={k} onClick={() => setTab(k)}
+            className={`px-4 py-2 rounded-lg text-[13.5px] font-semibold transition ${tab === k ? "bg-white text-navy shadow-sm" : "text-muted"}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === "pipeline" ? <CrmBody /> : <CustomersTab />}
     </StaffShell>
   );
 }
