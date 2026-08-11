@@ -680,7 +680,7 @@ type DbCustomerFull = {
   id: number; name: string; industry: string | null; contact_name: string | null;
   phone: string | null; email: string | null; line_id: string | null; note: string | null;
   address: string | null; subdistrict: string | null; district: string | null; province: string | null; postcode: string | null;
-  map_url: string | null; owner: string | null; created_at: string;
+  tax_id: string | null; map_url: string | null; owner: string | null; created_at: string;
 };
 type DbContact = { id: number; customer_id: number; name: string; position: string | null; phone: string | null; email: string | null; line_id: string | null; created_by: string | null };
 
@@ -727,7 +727,7 @@ function CustomersTab() {
     if (selected) setEdit({
       name: selected.name, industry: selected.industry, address: selected.address,
       subdistrict: selected.subdistrict, district: selected.district, province: selected.province, postcode: selected.postcode,
-      map_url: selected.map_url, note: selected.note, owner: selected.owner,
+      map_url: selected.map_url, note: selected.note, owner: selected.owner, tax_id: selected.tax_id,
     });
     setMsg("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -760,7 +760,7 @@ function CustomersTab() {
     const { data, error } = await supabase.from("customers").insert({
       name: String(edit.name).trim(), industry: edit.industry || null, address: edit.address || null,
       subdistrict: edit.subdistrict || null, district: edit.district || null, province: edit.province || null, postcode: edit.postcode || null,
-      map_url: edit.map_url || null, note: edit.note || null, owner: (edit.owner as string) || empId || null,
+      map_url: edit.map_url || null, note: edit.note || null, owner: (edit.owner as string) || empId || null, tax_id: edit.tax_id || null,
     }).select("id").single();
     setSaving(false);
     if (error) {
@@ -780,7 +780,7 @@ function CustomersTab() {
     await supabase.from("customers").update({
       name: String(edit.name).trim(), industry: edit.industry || null, address: edit.address || null,
       subdistrict: edit.subdistrict || null, district: edit.district || null, province: edit.province || null, postcode: edit.postcode || null,
-      map_url: edit.map_url || null, note: edit.note || null, owner: (edit.owner as string) || null,
+      map_url: edit.map_url || null, note: edit.note || null, owner: (edit.owner as string) || null, tax_id: edit.tax_id || null,
     }).eq("id", selected.id);
     setSaving(false); setMsg("✅ บันทึกแล้ว");
     load();
@@ -879,6 +879,11 @@ function CustomersTab() {
           <input value={String(edit.postcode ?? "")} onChange={(e) => setEdit({ ...edit, postcode: e.target.value })} disabled={readOnly}
             className="mt-1 w-full rounded-lg border border-ice px-2.5 py-2 text-[13px]" />
         </div>
+      </div>
+      <div>
+        <label className="text-[11.5px] font-bold text-muted">Tax ID (เลขผู้เสียภาษี)</label>
+        <input value={String(edit.tax_id ?? "")} onChange={(e) => setEdit({ ...edit, tax_id: e.target.value })} disabled={readOnly}
+          placeholder="13 หลัก — ใช้เติมในใบเสนอราคาอัตโนมัติ" className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
       </div>
       <div className="sm:col-span-2">
         <label className="text-[11.5px] font-bold text-muted">ลิงก์ Google Maps (คัดลอกลิงก์แชร์จาก Google Maps มาวาง)</label>

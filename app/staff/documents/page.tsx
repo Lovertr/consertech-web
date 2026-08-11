@@ -49,6 +49,23 @@ const CO = {
   taxId: "0125568008051",
 };
 
+type QCust = {
+  id: number; name: string; contact_name: string | null; tax_id: string | null;
+  address: string | null; subdistrict: string | null; district: string | null; province: string | null; postcode: string | null;
+};
+type QContact = { id: number; customer_id: number; name: string };
+function useDbCustomers() {
+  const [list, setList] = useState<QCust[]>([]);
+  const [contacts, setContacts] = useState<QContact[]>([]);
+  useEffect(() => {
+    supabase?.from("customers").select("id,name,contact_name,tax_id,address,subdistrict,district,province,postcode").order("name")
+      .then(({ data }) => setList((data as QCust[]) ?? []));
+    supabase?.from("customer_contacts").select("id,customer_id,name")
+      .then(({ data }) => setContacts((data as QContact[]) ?? []));
+  }, []);
+  return { list, contacts };
+}
+
 function useDbProducts() {
   const [list, setList] = useState<DbProductLite[]>([]);
   useEffect(() => {
@@ -233,6 +250,7 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
   const canApprove = dept === "management";
   const dbDeals = useDbDeals();
   const dbProducts = useDbProducts();
+  const { list: dbCustomers, contacts: dbContacts } = useDbCustomers();
   const [empMap, setEmpMap] = useState<Record<string, { name: string; email: string | null; signature_url: string | null }>>({});
   const [quotes, setQuotes] = useState<DbQuotation[]>([]);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -401,14 +419,32 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
             </select>
           </div>
           <div>
-            <label className="text-[11.5px] font-bold text-muted">ลูกค้า (ชื่อบริษัท) *</label>
-            <input value={customer} onChange={(e) => setCustomer(e.target.value)} disabled={readOnly} placeholder="เช่น THE NAWALOHA INDUSTRY COMPANY LIMITED"
+            <label className="text-[11.5px] font-bold text-muted">ลูกค้า (พิมพ์ค้นหาจากระบบ หรือพิมพ์ชื่อใหม่) *</label>
+            <input list="qt-customers" value={customer} disabled={readOnly} placeholder="พิมพ์ชื่อบริษัท..."
+              onChange={(e) => {
+                const v = e.target.value; setCustomer(v);
+                const hit = dbCustomers.find((c) => c.name === v);
+                if (hit) {
+                  // เติมข้อมูลจากระบบลูกค้าให้อัตโนมัติ
+                  if (hit.contact_name) setContactName(hit.contact_name);
+                  if (hit.tax_id) setCustTaxId(hit.tax_id);
+                  const addr = [hit.address, hit.subdistrict, hit.district, hit.province, hit.postcode].filter(Boolean).join(" ");
+                  if (addr) setCustAddr(addr);
+                }
+              }}
               className="mt-1 w-full text-[13px] rounded-lg border border-ice px-3 py-2" />
+            <datalist id="qt-customers">{dbCustomers.map((c) => <option key={c.id} value={c.name} />)}</datalist>
           </div>
           <div>
-            <label className="text-[11.5px] font-bold text-muted">ผู้ติดต่อ (ATTN)</label>
-            <input value={contactName} onChange={(e) => setContactName(e.target.value)} disabled={readOnly} placeholder="ชื่อผู้ติดต่อฝั่งลูกค้า"
+            <label className="text-[11.5px] font-bold text-muted">ผู้ติดต่อ (ATTN — พิมพ์ค้นหาได้)</label>
+            <input list="qt-contacts" value={contactName} onChange={(e) => setContactName(e.target.value)} disabled={readOnly} placeholder="ชื่อผู้ติดต่อฝั่งลูกค้า"
               className="mt-1 w-full text-[13px] rounded-lg border border-ice px-3 py-2" />
+            <datalist id="qt-contacts">
+              {(dbCustomers.find((c) => c.name === customer)
+                ? dbContacts.filter((x) => x.customer_id === dbCustomers.find((c) => c.name === customer)!.id)
+                : dbContacts
+              ).map((x) => <option key={x.id} value={x.name} />)}
+            </datalist>
           </div>
           <div>
             <label className="text-[11.5px] font-bold text-muted">Tax ID ลูกค้า</label>

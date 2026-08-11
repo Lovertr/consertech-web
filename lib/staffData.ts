@@ -7,7 +7,7 @@ import type { Department } from "./data";
 // ── สิทธิ์ตามแผนก (ตาม Permission Matrix ใน Blueprint) ──
 export type ModuleKey =
   | "dashboard" | "crm" | "documents" | "clients" | "projects" | "tasks"
-  | "meetings" | "expenses" | "leave" | "kpi" | "finance" | "master" | "users";
+  | "meetings" | "expenses" | "leave" | "kpi" | "finance" | "master" | "users" | "calendar";
 export type Access = "full" | "read" | "none";
 
 export const modulesMeta: { key: ModuleKey; label: string; icon: string }[] = [
@@ -17,6 +17,7 @@ export const modulesMeta: { key: ModuleKey; label: string; icon: string }[] = [
   { key: "clients", label: "สื่อสารลูกค้า", icon: "💬" },
   { key: "projects", label: "โปรเจกต์", icon: "🏗️" },
   { key: "tasks", label: "งานของทีม", icon: "✅" },
+  { key: "calendar", label: "ปฏิทินกิจกรรม", icon: "📅" },
   { key: "meetings", label: "ประชุม / บันทึกเสียง", icon: "🎙️" },
   { key: "expenses", label: "เบิกค่าใช้จ่าย", icon: "🚗" },
   { key: "leave", label: "ข้อมูลการทำงาน", icon: "🕐" },
@@ -27,11 +28,11 @@ export const modulesMeta: { key: ModuleKey; label: string; icon: string }[] = [
 ];
 
 export const permissions: Record<Department, Record<ModuleKey, Access>> = {
-  sales:       { dashboard: "full", crm: "full", documents: "full", clients: "full", projects: "read", tasks: "full", meetings: "full", expenses: "full", leave: "full", kpi: "full", finance: "none", master: "read", users: "none" },
-  engineering: { dashboard: "full", crm: "read", documents: "read", clients: "read", projects: "full", tasks: "full", meetings: "full", expenses: "full", leave: "full", kpi: "full", finance: "none", master: "full", users: "none" },
-  pm:          { dashboard: "full", crm: "read", documents: "read", clients: "full", projects: "full", tasks: "full", meetings: "full", expenses: "full", leave: "full", kpi: "full", finance: "read", master: "read", users: "none" },
-  admin:       { dashboard: "full", crm: "read", documents: "read", clients: "none", projects: "read", tasks: "full", meetings: "full", expenses: "full", leave: "full", kpi: "full", finance: "full", master: "read", users: "full" },
-  management:  { dashboard: "full", crm: "read", documents: "full", clients: "read", projects: "read", tasks: "full", meetings: "full", expenses: "full", leave: "full", kpi: "full", finance: "read", master: "full", users: "full" },
+  sales:       { dashboard: "full", crm: "full", documents: "full", clients: "full", projects: "read", tasks: "full", meetings: "full", expenses: "full", leave: "full", kpi: "full", finance: "none", master: "read", users: "none", calendar: "full" },
+  engineering: { dashboard: "full", crm: "read", documents: "read", clients: "read", projects: "full", tasks: "full", meetings: "full", expenses: "full", leave: "full", kpi: "full", finance: "none", master: "full", users: "none", calendar: "full" },
+  pm:          { dashboard: "full", crm: "read", documents: "read", clients: "full", projects: "full", tasks: "full", meetings: "full", expenses: "full", leave: "full", kpi: "full", finance: "read", master: "read", users: "none", calendar: "full" },
+  admin:       { dashboard: "full", crm: "read", documents: "read", clients: "none", projects: "read", tasks: "full", meetings: "full", expenses: "full", leave: "full", kpi: "full", finance: "full", master: "read", users: "full", calendar: "full" },
+  management:  { dashboard: "full", crm: "read", documents: "full", clients: "read", projects: "read", tasks: "full", meetings: "full", expenses: "full", leave: "full", kpi: "full", finance: "read", master: "full", users: "full", calendar: "full" },
 };
 
 // ── CRM ──
