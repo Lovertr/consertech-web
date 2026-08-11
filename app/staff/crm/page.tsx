@@ -1087,10 +1087,13 @@ function SalesAiTab() {
   const [chatBusy, setChatBusy] = useState(false);
   // อีเมล
   const [emCustText, setEmCustText] = useState("");
+  const [emContactText, setEmContactText] = useState("");
+  const [emQuote, setEmQuote] = useState("");
+  const [quotes, setQuotes] = useState<{ doc_no: string; customer_name: string; total: number; status: string; created_at: string }[]>([]);
   const [emType, setEmType] = useState<string>(EMAIL_TYPES[0]);
-  const [emLang, setEmLang] = useState<"th" | "en">("th");
   const [emExtra, setEmExtra] = useState("");
-  const [emResult, setEmResult] = useState("");
+  const [emData, setEmData] = useState<{ th: { subject: string; body: string }; en: { subject: string; body: string }; tips: string[] } | null>(null);
+  const [emView, setEmView] = useState<"th" | "en">("th");
   const [emBusy, setEmBusy] = useState(false);
   const [emErr, setEmErr] = useState("");
 
@@ -1104,6 +1107,8 @@ function SalesAiTab() {
       .then(({ data }) => setAiDeals((data as DbDeal[]) ?? []));
     supabase.from("deal_activities").select("*").order("created_at", { ascending: false }).limit(200)
       .then(({ data }) => setActs((data as DbActivity[]) ?? []));
+    supabase.from("quotations").select("doc_no,customer_name,total,status,created_at").order("created_at", { ascending: false })
+      .then(({ data }) => setQuotes((data as typeof quotes) ?? []));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1150,27 +1155,43 @@ function SalesAiTab() {
     }
   };
 
+  const isQuoteFollowup = emType === "Follow-up ใบเสนอราคา";
+  const emQuoteRow = quotes.find((x) => x.doc_no === emQuote) ?? null;
+
   const draftEmail = async () => {
-    setEmBusy(true); setEmErr(""); setEmResult("");
+    setEmBusy(true); setEmErr(""); setEmData(null);
     try {
       const ctx = emCustText ? contextFor(emCustText) : "";
       const j = await callCopilot({
         action: "ask",
         payload: [
           `ช่วยร่างอีเมลประเภท "${emType}" สำหรับพนักงานขายของ CONSERTECH (ผู้ขายระบบ AGV/AMR, FMS และอุปกรณ์เซนเซอร์อุตสาหกรรม โทร 062-363-5395, sale01@cs-th.com)`,
-          emLang === "th" ? "เขียนเป็นภาษาไทย สุภาพแบบธุรกิจไทย" : "Write the email in professional business English.",
           ctx || "ยังไม่ได้เลือกลูกค้า — ร่างแบบทั่วไปโดยเว้นช่อง [ชื่อลูกค้า] ให้เติม",
+          emContactText ? `เรียนถึงผู้ติดต่อ: ${emContactText} — ใช้ชื่อนี้ขึ้นต้นอีเมล` : "",
+          emQuoteRow ? `ใบเสนอราคาที่อ้างถึง: เลขที่ ${emQuoteRow.doc_no} ยอด ${Number(emQuoteRow.total).toLocaleString("th-TH")} บาท ส่งเมื่อ ${new Date(emQuoteRow.created_at).toLocaleDateString("th-TH", { day: "numeric", month: "long", year: "numeric" })} (สถานะ: ${emQuoteRow.status}) — อ้างเลขที่นี้ในอีเมล` : "",
           emExtra ? `คำสั่งเพิ่มเติมจากพนักงาน: ${emExtra}` : "",
-          "รูปแบบคำตอบ:\nSubject: (หัวข้ออีเมล)\n\n(เนื้อหาอีเมลเต็ม พร้อมลงท้าย)\n\n---\n💡 คำแนะนำ: (เคล็ดลับ 2-3 ข้อ เช่น จังหวะเวลาส่ง สิ่งที่ควร follow-up ต่อ ข้อควรระวัง — เขียนเป็นภาษาไทยเสมอ)",
+          `ร่างให้ 2 ภาษา (ไทยธุรกิจสุภาพ และ อังกฤษธุรกิจมืออาชีพ — เนื้อหาความหมายเดียวกัน) พร้อมคำแนะนำแยกต่างหาก`,
+          `ตอบเป็น JSON เท่านั้น ห้ามมีข้อความอื่น รูปแบบ: {"th":{"subject":"หัวข้อภาษาไทย","body":"เนื้อหาอีเมลไทยเต็มพร้อมลงท้าย"},"en":{"subject":"English subject","body":"Full English email body with sign-off"},"tips":["คำแนะนำภาษาไทยข้อ 1","ข้อ 2","ข้อ 3"]}`,
         ].filter(Boolean).join("\n\n").slice(0, 13500),
       });
-      setEmResult(String(j.text ?? ""));
+      const parsed = parseJsonLoose(String(j.text ?? "")) as { th?: { subject?: string; body?: string }; en?: { subject?: string; body?: string }; tips?: string[] } | null;
+      if (!parsed?.th?.body || !parsed?.en?.body) throw new Error("AI ตอบรูปแบบไม่ถูกต้อง — กดร่างใหม่อีกครั้ง");
+      setEmData({
+        th: { subject: parsed.th.subject ?? "", body: parsed.th.body },
+        en: { subject: parsed.en.subject ?? "", body: parsed.en.body },
+        tips: Array.isArray(parsed.tips) ? parsed.tips : [],
+      });
+      setEmView("th");
     } catch (e) {
-      setEmErr(String(e));
+      setEmErr(String((e as Error).message ?? e));
     } finally {
       setEmBusy(false);
     }
   };
+
+  const emCustId = customers.find((c) => c.name === emCustText)?.id ?? null;
+  const emContacts = emCustId !== null ? contacts.filter((c) => c.customer_id === emCustId) : [];
+  const emQuotes = emCustText ? quotes.filter((x) => x.customer_name === emCustText) : quotes;
 
   return (
     <div className="grid gap-5 min-[1100px]:grid-cols-2 items-start">
@@ -1222,44 +1243,95 @@ function SalesAiTab() {
       {/* AI Email Marketing */}
       <div className="card-white p-5 min-w-0">
         <p className="font-bold text-navy text-[15px]">✉️ AI ร่าง Email <span className="text-[10px] font-bold bg-brand/10 text-brand rounded px-1.5 py-0.5 align-middle">AI จริง</span></p>
-        <p className="text-[12px] text-muted mt-0.5">เลือกประเภทอีเมล + ลูกค้า + ภาษา แล้ว AI ร่างให้พร้อมคำแนะนำ</p>
+        <p className="text-[12px] text-muted mt-0.5">ร่างครั้งเดียวได้ทั้งไทยและอังกฤษ — สลับดูแล้วเลือกใช้ · คำแนะนำแยกให้ต่างหาก</p>
         <div className="mt-3 space-y-2.5">
           <div className="flex flex-wrap gap-1.5">
             {EMAIL_TYPES.map((t) => (
-              <button key={t} onClick={() => setEmType(t)}
+              <button key={t} onClick={() => { setEmType(t); if (t !== "Follow-up ใบเสนอราคา") setEmQuote(""); }}
                 className={`text-[11.5px] font-semibold rounded-lg px-2.5 py-1.5 border transition ${emType === t ? "bg-brand text-white border-brand" : "bg-white border-ice text-muted hover:border-brand"}`}>
                 {t}
               </button>
             ))}
           </div>
-          <div className="flex flex-wrap gap-2">
-            <input list="ai-customers" value={emCustText} onChange={(e) => setEmCustText(e.target.value)}
-              placeholder="🔍 เลือกลูกค้า (พิมพ์ค้นหา — ไม่บังคับ)"
-              className="flex-1 min-w-[200px] rounded-lg border border-ice px-3 py-2 text-[12.5px]" />
-            <div className="flex gap-1 bg-ice rounded-lg p-0.5">
-              {([["th", "🇹🇭 ไทย"], ["en", "🇬🇧 English"]] as const).map(([k, label]) => (
-                <button key={k} onClick={() => setEmLang(k)}
-                  className={`text-[12px] font-bold rounded-md px-2.5 py-1.5 transition ${emLang === k ? "bg-white text-navy shadow-sm" : "text-muted"}`}>
-                  {label}
-                </button>
-              ))}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[11px] font-bold text-muted">ลูกค้า (พิมพ์ค้นหา)</label>
+              <input list="ai-customers" value={emCustText}
+                onChange={(e) => { setEmCustText(e.target.value); setEmContactText(""); setEmQuote(""); }}
+                placeholder="ชื่อบริษัท..."
+                className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[12.5px]" />
+            </div>
+            <div>
+              <label className="text-[11px] font-bold text-muted">ผู้ติดต่อ (เรียนถึงใคร)</label>
+              <input list="ai-em-contacts" value={emContactText} onChange={(e) => setEmContactText(e.target.value)}
+                placeholder="พิมพ์ค้นหาผู้ติดต่อ..."
+                className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[12.5px]" />
+              <datalist id="ai-em-contacts">
+                {(emContacts.length ? emContacts : contacts).map((c, i) => <option key={i} value={c.name} />)}
+              </datalist>
             </div>
           </div>
+          {isQuoteFollowup && (
+            <div>
+              <label className="text-[11px] font-bold text-muted">ใบเสนอราคาที่จะตาม</label>
+              <select value={emQuote} onChange={(e) => setEmQuote(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-ice px-2.5 py-2 text-[12.5px] bg-white">
+                <option value="">— เลือกใบเสนอราคา —</option>
+                {emQuotes.map((x) => (
+                  <option key={x.doc_no} value={x.doc_no}>
+                    {x.doc_no} — {x.customer_name} ({Number(x.total).toLocaleString("th-TH")}฿ · {x.status})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <input value={emExtra} onChange={(e) => setEmExtra(e.target.value)}
-            placeholder="คำสั่งเพิ่มเติม (ไม่บังคับ) เช่น เน้นเรื่องลดต้นทุนแรงงาน / แนบว่าจะโทรตามวันศุกร์"
+            placeholder="คำสั่งเพิ่มเติม (ไม่บังคับ) เช่น เน้นเรื่องลดต้นทุนแรงงาน / แจ้งว่าจะโทรตามวันศุกร์"
             className="w-full rounded-lg border border-ice px-3 py-2 text-[12.5px]" />
           <button onClick={draftEmail} disabled={emBusy} className="btn btn-amber w-full text-[13.5px] py-2.5 disabled:opacity-60">
-            {emBusy ? "✨ AI กำลังร่างอีเมล..." : "✨ ให้ AI ร่างอีเมล + คำแนะนำ"}
+            {emBusy ? "✨ AI กำลังร่าง 2 ภาษา..." : "✨ ร่างอีเมล (ไทย + English) + คำแนะนำ"}
           </button>
         </div>
         {emErr && <p className="mt-2 text-[12.5px] text-[#D94141] bg-[#D94141]/10 rounded-lg px-3 py-2">⚠ {emErr}</p>}
-        {emResult && (
-          <div className="mt-3">
-            <div className="rounded-xl border border-ice bg-white p-3.5 text-[13px] leading-relaxed whitespace-pre-wrap max-h-[420px] overflow-y-auto">{emResult}</div>
-            <div className="mt-2 flex gap-2">
-              <button onClick={() => navigator.clipboard?.writeText(emResult)} className="btn btn-outline text-[12.5px] py-1.5 px-3">📋 คัดลอก</button>
-              <button onClick={draftEmail} disabled={emBusy} className="text-[12px] font-semibold text-sky hover:text-brand px-2 disabled:opacity-50">↻ ร่างใหม่อีกแบบ</button>
+        {emData && (
+          <div className="mt-3 space-y-3">
+            {/* สลับภาษา */}
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex gap-1 bg-ice rounded-lg p-0.5">
+                {([["th", "🇹🇭 ภาษาไทย"], ["en", "🇬🇧 English"]] as const).map(([k, label]) => (
+                  <button key={k} onClick={() => setEmView(k)}
+                    className={`text-[12px] font-bold rounded-md px-3 py-1.5 transition ${emView === k ? "bg-white text-navy shadow-sm" : "text-muted"}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <button onClick={draftEmail} disabled={emBusy} className="text-[12px] font-semibold text-sky hover:text-brand px-2 disabled:opacity-50">↻ ร่างใหม่</button>
             </div>
+            {/* ตัวอีเมล */}
+            <div className="rounded-xl border border-ice bg-white overflow-hidden">
+              <div className="bg-ice/50 px-3.5 py-2 border-b border-ice">
+                <p className="text-[11px] font-bold text-muted">Subject</p>
+                <p className="text-[13px] font-bold text-navy">{emData[emView].subject}</p>
+              </div>
+              <div className="p-3.5 text-[13px] leading-relaxed whitespace-pre-wrap max-h-[340px] overflow-y-auto">{emData[emView].body}</div>
+              <div className="px-3.5 pb-3 flex flex-wrap gap-2">
+                <button onClick={() => navigator.clipboard?.writeText(`${emData[emView].subject}\n\n${emData[emView].body}`)}
+                  className="btn btn-primary text-[12px] py-1.5 px-3">📋 คัดลอก{emView === "th" ? "ฉบับไทย" : " English"}</button>
+                <button onClick={() => navigator.clipboard?.writeText(emData[emView].body)}
+                  className="btn btn-outline text-[12px] py-1.5 px-3">คัดลอกเฉพาะเนื้อหา</button>
+              </div>
+            </div>
+            {/* คำแนะนำ แยกต่างหาก */}
+            {emData.tips.length > 0 && (
+              <div className="rounded-xl border border-amber/40 bg-amber/5 p-3.5">
+                <p className="text-[12px] font-bold text-navy">💡 คำแนะนำจาก AI (ไม่รวมในอีเมล)</p>
+                <div className="mt-1.5 space-y-1">
+                  {emData.tips.map((t, i) => (
+                    <p key={i} className="text-[12.5px] text-ink leading-relaxed">• {t}</p>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
