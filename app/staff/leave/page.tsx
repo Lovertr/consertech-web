@@ -2,9 +2,10 @@
 
 // โมดูลข้อมูลการทำงาน — ลงเวลาเข้า/เลิกงาน (Check In/Out + ตำแหน่ง GPS) + OT อัตโนมัติ + การลา
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import StaffShell, { useDept } from "@/components/staff/StaffShell";
 import { supabase } from "@/lib/supabase";
+import "leaflet/dist/leaflet.css";
 import {
   leaveBalance, leaveRequests, attendanceLog, workSchedule, mapPlaces, roadKm,
   type AttendanceRecord,
@@ -16,15 +17,79 @@ const types = [
   { key: "personal", label: "ลากิจ", ...leaveBalance.personal },
 ];
 
-type Stamp = { time: string; dateLabel: string; coords: string | null; place: string };
+type Stamp = { time: string; dateLabel: string; coords: string | null; place: string; lat?: number | null; lng?: number | null };
 
-function nearPlace(lat: number, lng: number) {
+function nearPlace(lat: number, lng: number): string | null {
   let best: { name: string; d: number } | null = null;
   for (const pl of mapPlaces) {
     const d = roadKm({ lat, lng }, { lat: pl.lat, lng: pl.lng });
     if (!best || d < best.d) best = { name: pl.name, d };
   }
-  return best && best.d <= 4 ? best.name : "นอกพื้นที่ที่บันทึกไว้";
+  return best && best.d <= 2 ? best.name : null;
+}
+
+// ชื่อสถานที่: สถานที่ที่บันทึกไว้ก่อน → ไม่เจอค่อยถามบริการแผนที่ (Nominatim/OSM — เดโมฟรี; ระบบจริงใช้ Google Maps)
+async function placeName(lat: number, lng: number): Promise<string> {
+  const known = nearPlace(lat, lng);
+  if (known) return known;
+  try {
+    const r = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&accept-language=th&zoom=16`,
+      { signal: AbortSignal.timeout(6000) }
+    );
+    if (r.ok) {
+      const j = await r.json();
+      if (j?.name) return j.name;
+      if (j?.display_name) return String(j.display_name).split(",").slice(0, 3).join(",").trim();
+    }
+  } catch {}
+  return "ตำแหน่งปัจจุบัน (นอกพื้นที่ที่บันทึกไว้)";
+}
+
+// แผนที่เล็กแสดงจุด Check In / Check Out
+function MiniMap({ pins }: { pins: { lat: number; lng: number; label: string; color: string }[] }) {
+  const divRef = useRef<HTMLDivElement>(null);
+  /* eslint-disable @typescript-eslint/no-explicit-any */
+  const mapRef = useRef<any>(null);
+  const LRef = useRef<any>(null);
+  const layerRef = useRef<any>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const mod: any = await import("leaflet");
+      const L = mod.default ?? mod;
+      if (cancelled || !divRef.current || mapRef.current) return;
+      LRef.current = L;
+      const map = L.map(divRef.current, { attributionControl: false, zoomControl: false }).setView([13.8933, 100.5161], 14);
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18 }).addTo(map);
+      L.control.attribution({ prefix: false }).addAttribution("© OpenStreetMap").addTo(map);
+      layerRef.current = L.layerGroup().addTo(map);
+      mapRef.current = map;
+    })();
+    return () => { cancelled = true; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; } };
+  }, []);
+
+  useEffect(() => {
+    const L = LRef.current, map = mapRef.current, layer = layerRef.current;
+    if (!L || !map || !layer) return;
+    layer.clearLayers();
+    const pts: [number, number][] = [];
+    for (const pin of pins) {
+      const icon = L.divIcon({
+        className: "",
+        html: `<div style="background:${pin.color};color:#fff;font-size:10.5px;font-weight:700;border-radius:10px;padding:1.5px 7px;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.45);transform:translate(-50%,-100%)">📍 ${pin.label}</div>`,
+        iconSize: [0, 0],
+      });
+      L.marker([pin.lat, pin.lng], { icon }).addTo(layer);
+      pts.push([pin.lat, pin.lng]);
+    }
+    if (pts.length >= 2) map.fitBounds(pts, { padding: [40, 40], maxZoom: 16 });
+    else if (pts.length === 1) map.setView(pts[0], 15);
+  }, [pins]);
+  /* eslint-enable @typescript-eslint/no-explicit-any */
+
+  return <div ref={divRef} className="relative z-0 h-44 w-full rounded-xl border border-ice overflow-hidden" />;
 }
 
 function fmtTime(d: Date) {
@@ -66,7 +131,7 @@ function TimeClock({ onSaved }: { onSaved?: () => void }) {
       const row = data?.[0];
       if (row) {
         const d = new Date(row.check_in);
-        setInStamp({ time: fmtTime(d), dateLabel: fmtDate(d), coords: row.in_lat ? `${row.in_lat.toFixed(5)}, ${row.in_lng.toFixed(5)}` : null, place: row.in_place ?? "" });
+        setInStamp({ time: fmtTime(d), dateLabel: fmtDate(d), coords: row.in_lat ? `${row.in_lat.toFixed(5)}, ${row.in_lng.toFixed(5)}` : null, place: row.in_place ?? "", lat: row.in_lat, lng: row.in_lng });
         setOpenId(row.id);
       }
     })();
@@ -76,7 +141,7 @@ function TimeClock({ onSaved }: { onSaved?: () => void }) {
     setLocating(which);
     const finish = async (coords: string | null, place: string, lat: number | null, lng: number | null) => {
       const now = new Date();
-      const s: Stamp = { time: fmtTime(now), dateLabel: fmtDate(now), coords, place };
+      const s: Stamp = { time: fmtTime(now), dateLabel: fmtDate(now), coords, place, lat, lng };
       if (which === "in") {
         setInStamp(s);
         if (supabase) {
@@ -104,12 +169,16 @@ function TimeClock({ onSaved }: { onSaved?: () => void }) {
     };
     if (typeof navigator !== "undefined" && navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
-        (pos) => finish(`${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`, nearPlace(pos.coords.latitude, pos.coords.longitude), pos.coords.latitude, pos.coords.longitude),
-        () => finish(`${mapPlaces[0].lat}, ${mapPlaces[0].lng} (เดโม)`, "สำนักงาน ปากเกร็ด — ไม่ได้รับอนุญาตตำแหน่ง ใช้พิกัดจำลอง", mapPlaces[0].lat, mapPlaces[0].lng),
+        async (pos) => finish(
+          `${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`,
+          await placeName(pos.coords.latitude, pos.coords.longitude),
+          pos.coords.latitude, pos.coords.longitude
+        ),
+        () => finish(`${mapPlaces[0].lat}, ${mapPlaces[0].lng} (เดโม)`, "สำนักงาน CONSERTECH — ไม่ได้รับอนุญาตตำแหน่ง ใช้พิกัดสำนักงาน", mapPlaces[0].lat, mapPlaces[0].lng),
         { timeout: 6000 }
       );
     } else {
-      finish(`${mapPlaces[0].lat}, ${mapPlaces[0].lng} (เดโม)`, "สำนักงาน ปากเกร็ด (พิกัดจำลอง)", mapPlaces[0].lat, mapPlaces[0].lng);
+      finish(`${mapPlaces[0].lat}, ${mapPlaces[0].lng} (เดโม)`, "สำนักงาน CONSERTECH (พิกัดจำลอง)", mapPlaces[0].lat, mapPlaces[0].lng);
     }
   };
 
@@ -169,6 +238,16 @@ function TimeClock({ onSaved }: { onSaved?: () => void }) {
           )}
         </div>
       </div>
+
+      {/* แผนที่จุดลงเวลา */}
+      {(inStamp?.lat != null || outStamp?.lat != null) && (
+        <div className="mt-3">
+          <MiniMap pins={[
+            ...(inStamp?.lat != null && inStamp?.lng != null ? [{ lat: inStamp.lat, lng: inStamp.lng, label: `เข้า ${inStamp.time}`, color: "#15659E" }] : []),
+            ...(outStamp?.lat != null && outStamp?.lng != null ? [{ lat: outStamp.lat, lng: outStamp.lng, label: `ออก ${outStamp.time}`, color: "#F0A030" }] : []),
+          ]} />
+        </div>
+      )}
 
       {/* OT อัตโนมัติ */}
       {outStamp && (

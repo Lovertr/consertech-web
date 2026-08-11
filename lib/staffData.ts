@@ -284,7 +284,7 @@ export const expenseRatesByPosition: { key: PositionKey; label: string; lodgingC
 
 // สถานที่จำลองสำหรับเดโมค้นหา Google Maps (ระยะทางโดยประมาณจากสำนักงาน ปากเกร็ด — ขาเดียว)
 export const mapPlaces: { name: string; lat: number; lng: number }[] = [
-  { name: "สำนักงาน CONSERTECH (ปากเกร็ด นนทบุรี)", lat: 13.893, lng: 100.4662 },
+  { name: "สำนักงาน CONSERTECH (ปากเกร็ด นนทบุรี)", lat: 13.89326, lng: 100.51614 },
   { name: "นิคมฯ บางปะอิน (อยุธยา)", lat: 14.2258, lng: 100.5842 },
   { name: "สวนอุตสาหกรรมโรจนะ (อยุธยา)", lat: 14.3467, lng: 100.6353 },
   { name: "ศูนย์กระจายสินค้า วังน้อย (อยุธยา)", lat: 14.2237, lng: 100.716 },
