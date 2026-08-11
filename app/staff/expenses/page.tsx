@@ -526,36 +526,49 @@ function TravelForm({ onTotal, empId }: { onTotal: (n: number) => void; empId: s
   );
 }
 
-function LodgingForm({ onTotal }: { onTotal: (n: number) => void }) {
-  const [pos, setPos] = useState<PositionKey>("staff");
+type DbRate = { key: string; label: string; lodging_cap: number; per_diem: number; sort: number };
+
+function LodgingForm({ onTotal, empId }: { onTotal: (n: number) => void; empId: string }) {
+  const [dbRates, setDbRates] = useState<DbRate[]>([]);
+  const [me, setMe] = useState<{ position: string; lodging_cap: number | null; per_diem: number | null; name: string } | null>(null);
   const [nights, setNights] = useState(1);
-  const [rate, setRate] = useState(850);
-  const [days, setDays] = useState(2);
-  const r = expenseRatesByPosition.find((x) => x.key === pos)!;
-  const total = nights * rate + days * r.perDiem;
+  const [rate, setRate] = useState(0);
+  const [days, setDays] = useState(1);
+
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.from("expense_rates").select("*").order("sort").then(({ data }) => setDbRates((data as DbRate[]) ?? []));
+    if (empId) {
+      supabase.from("employees").select("name,position,lodging_cap,per_diem").eq("id", empId).single()
+        .then(({ data }) => setMe(data as typeof me));
+    }
+  }, [empId]);
+
+  const posRate = dbRates.find((r) => r.key === me?.position);
+  // อัตราที่ใช้จริง: เฉพาะบุคคล (ถ้าตั้งไว้) > ตามตำแหน่ง
+  const lodgingCap = me?.lodging_cap ?? posRate?.lodging_cap ?? expenseRatesByPosition[0].lodgingCap;
+  const perDiem = me?.per_diem ?? posRate?.per_diem ?? expenseRatesByPosition[0].perDiem;
+  const hasPersonal = me?.lodging_cap != null || me?.per_diem != null;
+
+  const total = nights * rate + days * perDiem;
   onTotal(total);
+
   return (
     <div className="space-y-3">
-      {/* ตำแหน่ง — ในระบบจริงดึงจากโปรไฟล์พนักงานอัตโนมัติ เลือกได้ที่นี่เพื่อเดโม */}
-      <div>
-        <label className="block font-semibold text-navy mb-1 text-[13.5px]">ตำแหน่งพนักงาน <span className="text-[10.5px] font-normal text-muted">(เดโม — ระบบจริงดึงจากโปรไฟล์อัตโนมัติ)</span></label>
-        <select value={pos} onChange={(e) => setPos(e.target.value as PositionKey)}
-          className="w-full max-w-full rounded-lg border border-ice px-3 py-2 bg-white">
-          {expenseRatesByPosition.map((x) => (
-            <option key={x.key} value={x.key}>{x.label} — ที่พัก {fmt(x.lodgingCap)}฿/คืน · เบี้ยเลี้ยง {x.perDiem}฿/วัน</option>
-          ))}
-        </select>
-      </div>
       <div className="rounded-xl bg-ice/50 p-3.5 space-y-2.5">
-        <p className="text-[12px] font-bold text-navy">🏨 อัตราตามตำแหน่ง &ldquo;{r.label}&rdquo; — เพดานที่พัก {fmt(r.lodgingCap)}฿/คืน · เบี้ยเลี้ยง {r.perDiem}฿/วัน</p>
+        <p className="text-[12px] font-bold text-navy">
+          🏨 อัตราของคุณ ({posRate?.label ?? me?.position ?? "..."}) — เพดานที่พัก {fmt(lodgingCap)}฿/คืน · เบี้ยเลี้ยง {fmt(perDiem)}฿/วัน
+          {hasPersonal && <span className="ml-1.5 text-[10px] font-bold bg-amber/15 text-amber rounded px-1.5 py-0.5">อัตราเฉพาะบุคคล</span>}
+        </p>
+        <p className="text-[11px] text-muted/70">ดึงจากโปรไฟล์พนักงานอัตโนมัติ — แอดมินตั้งค่าได้ที่หน้าจัดการผู้ใช้</p>
         <NumField label="จำนวนคืนที่พัก" value={nights} onChange={setNights} suffix="คืน" />
         <NumField label="ค่าที่พักจริง/คืน (ตามใบเสร็จ)" value={rate} onChange={setRate} suffix="฿" />
-        <NumField label={`เบี้ยเลี้ยง ${r.perDiem}฿/วัน — จำนวนวัน`} value={days} onChange={setDays} suffix="วัน" />
-        {rate > r.lodgingCap && (
-          <p className="text-[11.5px] text-amber font-semibold">⚠ เกินเพดานที่พักของตำแหน่งนี้ ({fmt(r.lodgingCap)}฿/คืน) — ต้องให้ผู้บริหารอนุมัติพิเศษ</p>
+        <NumField label={`เบี้ยเลี้ยง ${fmt(perDiem)}฿/วัน — จำนวนวัน`} value={days} onChange={setDays} suffix="วัน" />
+        {rate > lodgingCap && (
+          <p className="text-[11.5px] text-amber font-semibold">⚠ เกินเพดานที่พักของคุณ ({fmt(lodgingCap)}฿/คืน) — ต้องให้ผู้บริหารอนุมัติพิเศษ</p>
         )}
       </div>
-      {/* ตารางอัตราทุกตำแหน่ง */}
+      {/* ตารางอัตราทุกตำแหน่ง (จากที่แอดมินตั้งค่า) */}
       <details className="text-[12px] text-muted">
         <summary className="cursor-pointer font-semibold text-sky">ดูตารางอัตราทุกตำแหน่ง</summary>
         <div className="mt-2 overflow-x-auto">
@@ -566,16 +579,16 @@ function LodgingForm({ onTotal }: { onTotal: (n: number) => void }) {
               <th className="text-right px-2.5 py-1.5 font-bold">เบี้ยเลี้ยง/วัน</th>
             </tr></thead>
             <tbody>
-              {expenseRatesByPosition.map((x, i) => (
+              {dbRates.map((x, i) => (
                 <tr key={x.key} className={i % 2 ? "bg-ice/30" : ""}>
                   <td className="px-2.5 py-1.5">{x.label}</td>
-                  <td className="px-2.5 py-1.5 text-right">{fmt(x.lodgingCap)} ฿</td>
-                  <td className="px-2.5 py-1.5 text-right">{x.perDiem} ฿</td>
+                  <td className="px-2.5 py-1.5 text-right">{fmt(x.lodging_cap)} ฿</td>
+                  <td className="px-2.5 py-1.5 text-right">{fmt(x.per_diem)} ฿</td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <p className="mt-1 text-[11px] text-muted/70 italic">อัตราเป็นตัวเลขสมมุติ — บริษัทกำหนดจริงในข้อมูล Master ได้</p>
+          <p className="mt-1 text-[11px] text-muted/70 italic">แอดมินแก้อัตราได้ที่หน้าจัดการผู้ใช้ · อัตราเฉพาะบุคคลตั้งได้รายคน</p>
         </div>
       </details>
     </div>
@@ -701,7 +714,7 @@ function ClaimForm({ empId, onSaved }: { empId: string; onSaved: () => void }) {
         <RefPicker onChange={setRefDoc} />
 
         {cat === "travel" && <TravelForm onTotal={setTotal} empId={empId} />}
-        {cat === "lodging" && <LodgingForm onTotal={setTotal} />}
+        {cat === "lodging" && <LodgingForm onTotal={setTotal} empId={empId} />}
         {cat === "entertain" && <EntertainForm onTotal={setTotal} />}
         {cat === "supplies" && <SimpleAmountForm placeholder="รายการวัสดุ/อุปกรณ์ที่ซื้อ + ร้านค้า" onTotal={setTotal} />}
         {cat === "training" && <SimpleAmountForm placeholder="ชื่อหลักสูตร/งานสัมมนา + ผู้จัด" onTotal={setTotal} />}

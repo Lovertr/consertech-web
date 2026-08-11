@@ -180,7 +180,7 @@ export function normCompany(s: string): string {
 }
 
 // นามบัตร 1 ใบ = ผู้ติดต่อ 1 คน — ถ้าบริษัทมีอยู่แล้วเพิ่มเป็นผู้ติดต่อ ถ้ายังไม่มีสร้างบริษัทใหม่ให้ด้วย
-async function upsertFromCard(f: Record<string, string | null>): Promise<{ customerId: number; createdCompany: boolean; companyName: string; contactName: string | null; contactUpdated?: boolean }> {
+async function upsertFromCard(f: Record<string, string | null>, empId?: string): Promise<{ customerId: number; createdCompany: boolean; companyName: string; contactName: string | null; contactUpdated?: boolean }> {
   if (!supabase) throw new Error("ยังไม่ได้เชื่อมต่อฐานข้อมูล");
   const companyName = (f.company_name ?? "").trim() || [f.first_name, f.last_name].filter(Boolean).join(" ").trim() || "ลูกค้าใหม่ (จากนามบัตร)";
   const contactName = [f.first_name, f.last_name].filter(Boolean).join(" ").trim() || null;
@@ -208,6 +208,7 @@ async function upsertFromCard(f: Record<string, string | null>): Promise<{ custo
   } else {
     const { data: cust, error } = await supabase.from("customers").insert({
       name: companyName, contact_name: contactName, phone: f.phone ?? null, email: f.email ?? null, line_id: f.line_id ?? null, address, ...parts,
+      owner: empId || null,
     }).select("id").single();
     if (error) throw error;
     customerId = cust.id;
@@ -225,7 +226,7 @@ async function upsertFromCard(f: Record<string, string | null>): Promise<{ custo
       await supabase.from("customer_contacts").update(row).eq("id", dup[0].id);
       contactUpdated = true;
     } else {
-      await supabase.from("customer_contacts").insert({ customer_id: customerId, name: contactName, ...row });
+      await supabase.from("customer_contacts").insert({ customer_id: customerId, name: contactName, ...row, created_by: empId || null });
     }
   }
   return { customerId, createdCompany, companyName, contactName, contactUpdated };
@@ -679,13 +680,14 @@ type DbCustomerFull = {
   id: number; name: string; industry: string | null; contact_name: string | null;
   phone: string | null; email: string | null; line_id: string | null; note: string | null;
   address: string | null; subdistrict: string | null; district: string | null; province: string | null; postcode: string | null;
-  map_url: string | null; created_at: string;
+  map_url: string | null; owner: string | null; created_at: string;
 };
-type DbContact = { id: number; customer_id: number; name: string; position: string | null; phone: string | null; email: string | null; line_id: string | null };
+type DbContact = { id: number; customer_id: number; name: string; position: string | null; phone: string | null; email: string | null; line_id: string | null; created_by: string | null };
 
 function CustomersTab() {
-  const { access } = useDept();
+  const { access, empId } = useDept();
   const readOnly = access("crm") === "read";
+  const [emps, setEmps] = useState<{ id: string; name: string }[]>([]);
   const [customers, setCustomers] = useState<DbCustomerFull[]>([]);
   const [contacts, setContacts] = useState<DbContact[]>([]);
   const [custDeals, setCustDeals] = useState<DbDeal[]>([]);
@@ -705,11 +707,13 @@ function CustomersTab() {
 
   const load = useCallback(async () => {
     if (!supabase) return;
-    const [c, ct, d] = await Promise.all([
+    const [c, ct, d, e] = await Promise.all([
       supabase.from("customers").select("*").order("name"),
       supabase.from("customer_contacts").select("*").order("created_at"),
       supabase.from("deals").select("*").order("created_at", { ascending: false }),
+      supabase.from("employees").select("id,name"),
     ]);
+    setEmps((e.data as { id: string; name: string }[]) ?? []);
     const list = (c.data as DbCustomerFull[]) ?? [];
     setCustomers(list);
     setContacts((ct.data as DbContact[]) ?? []);
@@ -723,7 +727,7 @@ function CustomersTab() {
     if (selected) setEdit({
       name: selected.name, industry: selected.industry, address: selected.address,
       subdistrict: selected.subdistrict, district: selected.district, province: selected.province, postcode: selected.postcode,
-      map_url: selected.map_url, note: selected.note,
+      map_url: selected.map_url, note: selected.note, owner: selected.owner,
     });
     setMsg("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -735,8 +739,10 @@ function CustomersTab() {
     (!provFilter || c.province === provFilter) &&
     (!q.trim() || (c.name + " " + (c.industry ?? "") + " " + (c.province ?? "") + " " + (c.district ?? "") + " " + contacts.filter((x) => x.customer_id === c.id).map((x) => x.name).join(" ")).toLowerCase().includes(q.trim().toLowerCase())));
 
+  const empName = (id: string | null) => emps.find((x) => x.id === id)?.name ?? id ?? "-";
+
   const scanCard = async (f: Record<string, string | null>) => {
-    const r = await upsertFromCard(f);
+    const r = await upsertFromCard(f, empId);
     await load();
     setSelectedId(r.customerId);
     return r.createdCompany
@@ -754,7 +760,7 @@ function CustomersTab() {
     const { data, error } = await supabase.from("customers").insert({
       name: String(edit.name).trim(), industry: edit.industry || null, address: edit.address || null,
       subdistrict: edit.subdistrict || null, district: edit.district || null, province: edit.province || null, postcode: edit.postcode || null,
-      map_url: edit.map_url || null, note: edit.note || null,
+      map_url: edit.map_url || null, note: edit.note || null, owner: (edit.owner as string) || empId || null,
     }).select("id").single();
     setSaving(false);
     if (error) {
@@ -774,7 +780,7 @@ function CustomersTab() {
     await supabase.from("customers").update({
       name: String(edit.name).trim(), industry: edit.industry || null, address: edit.address || null,
       subdistrict: edit.subdistrict || null, district: edit.district || null, province: edit.province || null, postcode: edit.postcode || null,
-      map_url: edit.map_url || null, note: edit.note || null,
+      map_url: edit.map_url || null, note: edit.note || null, owner: (edit.owner as string) || null,
     }).eq("id", selected.id);
     setSaving(false); setMsg("✅ บันทึกแล้ว");
     load();
@@ -793,6 +799,7 @@ function CustomersTab() {
     await supabase.from("customer_contacts").insert({
       customer_id: selected.id, name: cName.trim(), position: cPos.trim() || null,
       phone: cPhone.trim() || null, email: cEmail.trim() || null, line_id: cLine.trim() || null,
+      created_by: empId || null,
     });
     if (!selected.contact_name) {
       await supabase.from("customers").update({ contact_name: cName.trim(), phone: cPhone.trim() || null, email: cEmail.trim() || null }).eq("id", selected.id);
@@ -834,6 +841,14 @@ function CustomersTab() {
         <label className="text-[11.5px] font-bold text-muted">อุตสาหกรรม</label>
         <input value={String(edit.industry ?? "")} onChange={(e) => setEdit({ ...edit, industry: e.target.value })} disabled={readOnly}
           placeholder="เช่น ยานยนต์ / โลจิสติกส์" className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
+      </div>
+      <div className="sm:col-span-2">
+        <label className="text-[11.5px] font-bold text-muted">👤 ผู้รับผิดชอบ (Sale เจ้าของลูกค้า)</label>
+        <select value={String(edit.owner ?? "")} onChange={(e) => setEdit({ ...edit, owner: e.target.value })} disabled={readOnly}
+          className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px] bg-white">
+          <option value="">— ยังไม่ระบุ —</option>
+          {emps.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+        </select>
       </div>
       <div className="sm:col-span-2">
         <label className="text-[11.5px] font-bold text-muted">ที่อยู่ (เลขที่/หมู่/ถนน/อาคาร)</label>
@@ -922,7 +937,7 @@ function CustomersTab() {
                   className={`w-full text-left rounded-xl border p-3 transition text-[12.5px] ${selectedId === c.id && !adding ? "border-brand bg-ice/40" : "border-ice hover:border-brand"}`}>
                   <p className="font-bold text-navy leading-snug">{c.name}</p>
                   <p className="text-[11px] text-muted/80 mt-0.5">
-                    {[c.industry, c.province && `📍 ${c.province}`].filter(Boolean).join(" · ") || "-"} · 👤 {n} · 🤝 {nd} ดีล
+                    {[c.industry, c.province && `📍 ${c.province}`, c.owner && `👤 ${empName(c.owner)}`].filter(Boolean).join(" · ") || "-"} · ผู้ติดต่อ {n} · 🤝 {nd} ดีล
                   </p>
                 </button>
               );
@@ -942,7 +957,10 @@ function CustomersTab() {
             <>
               <div className="card-white p-5">
                 <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
-                  <p className="font-bold text-navy text-[16px]">{selected.name}</p>
+                  <div>
+                    <p className="font-bold text-navy text-[16px]">{selected.name}</p>
+                    <p className="text-[11.5px] text-muted mt-0.5">👤 ผู้รับผิดชอบ: <strong className="text-brand">{empName(selected.owner)}</strong></p>
+                  </div>
                   <div className="flex gap-2">
                     {selected.map_url && (
                       <a href={selected.map_url} target="_blank" rel="noreferrer" className="btn btn-outline text-[12px] py-1.5 px-3">📍 เปิดแผนที่</a>
@@ -992,6 +1010,7 @@ function CustomersTab() {
                           <p className="text-[11.5px] text-muted/80 mt-1">
                             {[c.phone && `📞 ${c.phone}`, c.email && `✉ ${c.email}`, c.line_id && `LINE: ${c.line_id}`].filter(Boolean).join(" · ") || "—"}
                           </p>
+                          {c.created_by && <p className="text-[10.5px] text-muted/60 mt-0.5">เพิ่มโดย {empName(c.created_by)}</p>}
                         </>
                       )}
                     </div>

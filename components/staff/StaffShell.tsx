@@ -15,7 +15,7 @@ export type AccessOverrides = Record<string, Partial<Record<ModuleKey, Access>>>
 export const OVERRIDES_KEY = "consertech-access-overrides";
 export const PERMS_EVENT = "consertech-perms-updated";
 
-type EmpInfo = { id: string; name: string; dept: Department; email: string; mustChange: boolean };
+type EmpInfo = { id: string; name: string; dept: Department; email: string; mustChange: boolean; avatar?: string | null; nickname?: string | null };
 
 const DeptCtx = createContext<{ dept: Department; empId: string; access: (m: ModuleKey) => Access }>({
   dept: "sales",
@@ -121,10 +121,10 @@ export default function StaffShell({ children, title }: { children: ReactNode; t
     }
     (async () => {
       const { data } = await supabase!
-        .from("employees").select("id,name,dept,email,must_change_password")
+        .from("employees").select("id,name,dept,email,must_change_password,avatar_url,nickname")
         .eq("email", sessionEmail).single();
       if (data) {
-        setEmpInfo({ id: data.id, name: data.name, dept: data.dept as Department, email: data.email, mustChange: data.must_change_password });
+        setEmpInfo({ id: data.id, name: data.name, dept: data.dept as Department, email: data.email, mustChange: data.must_change_password, avatar: data.avatar_url ?? null, nickname: data.nickname ?? null });
       } else {
         setEmpInfo(null); // มีบัญชีแต่ไม่ผูกกับพนักงาน
       }
@@ -196,7 +196,13 @@ export default function StaffShell({ children, title }: { children: ReactNode; t
             <p className="hidden min-[820px]:block text-[11px] font-bold tracking-widest text-sky uppercase px-2">
               Portal — {deptLabel}
             </p>
-            <p className="hidden min-[820px]:block text-[12px] font-bold text-navy px-2 mt-0.5 truncate">👤 {empInfo?.name}</p>
+            <p className="hidden min-[820px]:flex items-center gap-1.5 text-[12px] font-bold text-navy px-2 mt-0.5 truncate">
+              {empInfo?.avatar
+                // eslint-disable-next-line @next/next/no-img-element
+                ? <img src={empInfo.avatar} alt="" className="w-6 h-6 rounded-full object-cover border border-ice shrink-0" />
+                : <span>👤</span>}
+              <span className="truncate">{empInfo?.name}{empInfo?.nickname ? ` (${empInfo.nickname})` : ""}</span>
+            </p>
             {empInfo?.email !== "demo" && (
               <p className="hidden min-[820px]:block text-[10.5px] text-muted px-2 truncate">{empInfo?.email}</p>
             )}

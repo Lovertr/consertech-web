@@ -31,6 +31,23 @@ function UsersBody() {
   const [acctMsg, setAcctMsg] = useState<string | null>(null);
   const [acctBusy, setAcctBusy] = useState(false);
   const [newEmp, setNewEmp] = useState<{ name: string; dept: Department } | null>(null);
+  const [dbRates, setDbRates] = useState<{ key: string; label: string; lodging_cap: number; per_diem: number; sort: number }[]>([]);
+  const [ratesSaved, setRatesSaved] = useState(true);
+  const [personalRates, setPersonalRates] = useState<Record<string, { lodging: string; perdiem: string }>>({});
+  type Profile = { first: string; last: string; nick: string; birth: string; start: string; avatar: string | null };
+  const [profiles, setProfiles] = useState<Record<string, Profile>>({});
+  const [avatarBusy, setAvatarBusy] = useState(false);
+
+  const rowProfile = (r: Record<string, unknown>): Profile => ({
+    first: (r.first_name as string) ?? "", last: (r.last_name as string) ?? "", nick: (r.nickname as string) ?? "",
+    birth: (r.birth_date as string) ?? "", start: (r.start_date as string) ?? "", avatar: (r.avatar_url as string) ?? null,
+  });
+
+  useEffect(() => {
+    supabase?.from("expense_rates").select("*").order("sort")
+      .then(({ data }) => setDbRates((data as typeof dbRates) ?? []));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const reloadEmployees = async () => {
     if (!supabase) return;
@@ -42,6 +59,8 @@ function UsersBody() {
         leaveQuota: { annual: r.leave_annual, sick: r.leave_sick, personal: r.leave_personal },
       })));
       setAccounts(Object.fromEntries(emps.map((r) => [r.id, { email: r.email, mustChange: r.must_change_password }])));
+      setPersonalRates(Object.fromEntries(emps.map((r) => [r.id, { lodging: r.lodging_cap != null ? String(r.lodging_cap) : "", perdiem: r.per_diem != null ? String(r.per_diem) : "" }])));
+      setProfiles(Object.fromEntries(emps.map((r) => [r.id, rowProfile(r)])));
     }
   };
 
@@ -96,6 +115,8 @@ function UsersBody() {
             leaveQuota: { annual: r.leave_annual, sick: r.leave_sick, personal: r.leave_personal },
           })));
           setAccounts(Object.fromEntries(emps.map((r) => [r.id, { email: r.email, mustChange: r.must_change_password }])));
+          setPersonalRates(Object.fromEntries(emps.map((r) => [r.id, { lodging: r.lodging_cap != null ? String(r.lodging_cap) : "", perdiem: r.per_diem != null ? String(r.per_diem) : "" }])));
+          setProfiles(Object.fromEntries(emps.map((r) => [r.id, rowProfile(r)])));
           const o: AccessOverrides = {};
           for (const r of ovr ?? []) (o[r.emp_id] ??= {})[r.module as ModuleKey] = r.access as Access;
           setAccessOverride(o);
@@ -112,10 +133,19 @@ function UsersBody() {
   const saveAll = async () => {
     const cur = list.find((e) => e.id === selectedId)!;
     if (supabase && dbStatus === "db") {
+      const pr = personalRates[cur.id];
+      const pf = profiles[cur.id];
+      const fullName = pf && (pf.first.trim() || pf.last.trim()) ? [pf.first.trim(), pf.last.trim()].filter(Boolean).join(" ") : cur.name;
       await supabase.from("employees").update({
         position: cur.position, ot_enabled: cur.otEnabled,
         leave_annual: cur.leaveQuota.annual, leave_sick: cur.leaveQuota.sick, leave_personal: cur.leaveQuota.personal,
+        lodging_cap: pr && pr.lodging !== "" ? Number(pr.lodging) : null,
+        per_diem: pr && pr.perdiem !== "" ? Number(pr.perdiem) : null,
+        name: fullName,
+        first_name: pf?.first.trim() || null, last_name: pf?.last.trim() || null, nickname: pf?.nick.trim() || null,
+        birth_date: pf?.birth || null, start_date: pf?.start || null, avatar_url: pf?.avatar ?? null,
       }).eq("id", cur.id);
+      if (fullName !== cur.name) update({ name: fullName });
       const rows = Object.entries(accessOverride[cur.id] ?? {}).map(([module, access]) => ({ emp_id: cur.id, module, access }));
       if (rows.length) await supabase.from("access_overrides").upsert(rows);
     }
@@ -137,6 +167,28 @@ function UsersBody() {
   const setAcc = (m: ModuleKey, a: Access) => {
     setAccessOverride((o) => ({ ...o, [emp.id]: { ...o[emp.id], [m]: a } }));
     setSaved(false);
+  };
+
+  const pf = profiles[emp.id] ?? { first: "", last: "", nick: "", birth: "", start: "", avatar: null };
+  const setPf = (patch: Partial<typeof pf>) => {
+    setProfiles((m) => ({ ...m, [emp.id]: { ...pf, ...patch } }));
+    setSaved(false);
+  };
+
+  const uploadAvatar = async (f: File) => {
+    if (!supabase) return;
+    setAvatarBusy(true);
+    try {
+      const ext = f.name.split(".").pop() ?? "jpg";
+      const path = `avatars/${emp.id}-${Date.now()}.${ext}`;
+      const { error } = await supabase.storage.from("attachments").upload(path, f, { contentType: f.type });
+      if (!error) {
+        const { data } = supabase.storage.from("attachments").getPublicUrl(path);
+        setPf({ avatar: data.publicUrl });
+      }
+    } finally {
+      setAvatarBusy(false);
+    }
   };
 
   return (
@@ -179,7 +231,13 @@ function UsersBody() {
                 className={`shrink-0 min-[1040px]:shrink text-left rounded-lg px-3 py-2 transition whitespace-nowrap min-[1040px]:whitespace-normal ${
                   e.id === selectedId ? "bg-brand text-white" : "hover:bg-ice"
                 }`}>
-                <p className={`text-[13px] font-bold ${e.id === selectedId ? "text-white" : "text-navy"}`}>{e.name}</p>
+                <p className={`text-[13px] font-bold ${e.id === selectedId ? "text-white" : "text-navy"}`}>
+                  {profiles[e.id]?.avatar && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={profiles[e.id]!.avatar!} alt="" className="inline-block w-5 h-5 rounded-full object-cover mr-1.5 align-middle border border-white/40" />
+                  )}
+                  {e.name}{profiles[e.id]?.nick ? ` (${profiles[e.id]!.nick})` : ""}
+                </p>
                 <p className={`text-[11px] ${e.id === selectedId ? "text-white/80" : "text-muted"}`}>
                   {deptLabel(e.dept)} · {expenseRatesByPosition.find((r) => r.key === e.position)?.label}
                   {e.otEnabled && <span className={`ml-1.5 text-[9.5px] font-bold rounded px-1 py-0.5 ${e.id === selectedId ? "bg-white/20" : "bg-amber/15 text-amber"}`}>OT</span>}
@@ -222,6 +280,65 @@ function UsersBody() {
 
             <div className="mt-4 grid gap-4 min-[700px]:grid-cols-2">
               {/* ตำแหน่ง */}
+              {/* ── โปรไฟล์พนักงาน ── */}
+              <div className="sm:col-span-2 min-[700px]:col-span-2 rounded-xl border border-ice p-3.5" style={{ gridColumn: "1 / -1" }}>
+                <p className="font-semibold text-navy text-[13px] mb-2.5">👤 โปรไฟล์พนักงาน</p>
+                <div className="flex flex-wrap gap-4 items-start">
+                  <div className="text-center">
+                    {pf.avatar ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={pf.avatar} alt="" className="w-20 h-20 rounded-full object-cover border-2 border-ice" />
+                    ) : (
+                      <div className="w-20 h-20 rounded-full bg-ice flex items-center justify-center text-[28px]">👤</div>
+                    )}
+                    {!readOnly && (
+                      <>
+                        <input id="avatar-input" type="file" accept="image/*" className="hidden"
+                          onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadAvatar(f); e.target.value = ""; }} />
+                        <button onClick={() => document.getElementById("avatar-input")?.click()} disabled={avatarBusy}
+                          className="mt-1.5 block w-full text-[11px] font-semibold text-sky hover:text-brand disabled:opacity-50">
+                          {avatarBusy ? "⏳..." : pf.avatar ? "เปลี่ยนรูป" : "📷 ใส่รูป"}
+                        </button>
+                        {pf.avatar && <button onClick={() => setPf({ avatar: null })} className="text-[10.5px] text-muted/70 hover:text-[#D94141]">ลบรูป</button>}
+                      </>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-[240px] grid grid-cols-2 gap-2.5 text-[13px]">
+                    <div>
+                      <label className="text-[11.5px] font-bold text-muted">ชื่อ</label>
+                      <input value={pf.first} disabled={readOnly} onChange={(e) => setPf({ first: e.target.value })}
+                        className="mt-1 w-full rounded-lg border border-ice px-2.5 py-1.5" />
+                    </div>
+                    <div>
+                      <label className="text-[11.5px] font-bold text-muted">นามสกุล</label>
+                      <input value={pf.last} disabled={readOnly} onChange={(e) => setPf({ last: e.target.value })}
+                        className="mt-1 w-full rounded-lg border border-ice px-2.5 py-1.5" />
+                    </div>
+                    <div>
+                      <label className="text-[11.5px] font-bold text-muted">ชื่อเล่น</label>
+                      <input value={pf.nick} disabled={readOnly} onChange={(e) => setPf({ nick: e.target.value })}
+                        className="mt-1 w-full rounded-lg border border-ice px-2.5 py-1.5" />
+                    </div>
+                    <div>
+                      <label className="text-[11.5px] font-bold text-muted">วันเกิด</label>
+                      <input type="date" value={pf.birth} disabled={readOnly} onChange={(e) => setPf({ birth: e.target.value })}
+                        className="mt-1 w-full rounded-lg border border-ice px-2.5 py-1.5" />
+                    </div>
+                    <div>
+                      <label className="text-[11.5px] font-bold text-muted">วันเริ่มงาน</label>
+                      <input type="date" value={pf.start} disabled={readOnly} onChange={(e) => setPf({ start: e.target.value })}
+                        className="mt-1 w-full rounded-lg border border-ice px-2.5 py-1.5" />
+                    </div>
+                    {pf.start && (
+                      <div className="self-end pb-1 text-[11.5px] text-sky">
+                        อายุงาน {Math.floor((Date.now() - new Date(pf.start).getTime()) / (365.25 * 86400000) * 10) / 10} ปี
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <p className="mt-2 text-[11px] text-muted/70">ใส่ชื่อ-นามสกุลแล้วกดบันทึก ชื่อที่แสดงทั้งระบบจะเปลี่ยนเป็นชื่อจริงอัตโนมัติ</p>
+              </div>
+
               <div className="min-w-0">
                 <label className="block font-semibold text-navy mb-1 text-[13px]">ตำแหน่ง</label>
                 <select value={emp.position} disabled={readOnly}
@@ -230,8 +347,27 @@ function UsersBody() {
                   {expenseRatesByPosition.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
                 </select>
                 <p className="mt-1.5 text-[11.5px] text-sky bg-ice/50 rounded-lg px-2.5 py-1.5">
-                  อัตราตามตำแหน่ง (อัตโนมัติ): ที่พัก {rate.lodgingCap.toLocaleString()} ฿/คืน · เบี้ยเลี้ยง {rate.perDiem} ฿/วัน · ค่าเดินทาง {expensePolicy.kmRate} ฿/กม.
+                  อัตราตามตำแหน่ง: ที่พัก {(dbRates.find((r) => r.key === emp.position)?.lodging_cap ?? rate.lodgingCap).toLocaleString()} ฿/คืน · เบี้ยเลี้ยง {dbRates.find((r) => r.key === emp.position)?.per_diem ?? rate.perDiem} ฿/วัน · ค่าเดินทาง {expensePolicy.kmRate} ฿/กม.
                 </p>
+                <div className="mt-2 rounded-lg border border-dashed border-amber/50 bg-amber/5 p-2.5">
+                  <p className="text-[11.5px] font-bold text-navy">อัตราเฉพาะบุคคล <span className="font-normal text-muted">(เว้นว่าง = ใช้อัตราตามตำแหน่ง)</span></p>
+                  <div className="mt-1.5 flex flex-wrap gap-2 text-[12px]">
+                    <label className="flex items-center gap-1.5">ที่พัก
+                      <input type="number" min={0} disabled={readOnly} placeholder="ตามตำแหน่ง"
+                        value={personalRates[emp.id]?.lodging ?? ""}
+                        onChange={(e) => { setPersonalRates((m) => ({ ...m, [emp.id]: { lodging: e.target.value, perdiem: m[emp.id]?.perdiem ?? "" } })); setSaved(false); }}
+                        className="w-24 rounded-lg border border-ice px-2 py-1.5 text-right bg-white" />
+                      ฿/คืน
+                    </label>
+                    <label className="flex items-center gap-1.5">เบี้ยเลี้ยง
+                      <input type="number" min={0} disabled={readOnly} placeholder="ตามตำแหน่ง"
+                        value={personalRates[emp.id]?.perdiem ?? ""}
+                        onChange={(e) => { setPersonalRates((m) => ({ ...m, [emp.id]: { lodging: m[emp.id]?.lodging ?? "", perdiem: e.target.value } })); setSaved(false); }}
+                        className="w-24 rounded-lg border border-ice px-2 py-1.5 text-right bg-white" />
+                      ฿/วัน
+                    </label>
+                  </div>
+                </div>
               </div>
               {/* OT */}
               <div className="min-w-0">
@@ -356,6 +492,53 @@ function UsersBody() {
           </div>
         </div>
       </div>
+      {/* ── อัตราค่าที่พัก/เบี้ยเลี้ยงตามตำแหน่ง (ตั้งค่าได้จริง) ── */}
+      {!readOnly && (
+        <div className="mt-5 card-white p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="font-bold text-navy text-[15px]">🏨 อัตราค่าที่พัก / เบี้ยเลี้ยง ตามตำแหน่ง</p>
+            <button
+              onClick={async () => {
+                if (!supabase) return;
+                for (const r of dbRates) {
+                  await supabase.from("expense_rates").update({ lodging_cap: r.lodging_cap, per_diem: r.per_diem }).eq("key", r.key);
+                }
+                setRatesSaved(true);
+              }}
+              disabled={ratesSaved}
+              className="btn btn-primary text-[12.5px] py-1.5 px-3.5 disabled:opacity-50">
+              {ratesSaved ? "✓ บันทึกแล้ว" : "บันทึกอัตรา"}
+            </button>
+          </div>
+          <p className="text-[11.5px] text-muted mt-0.5">ใช้กับฟอร์มเบิกค่าที่พัก/เบี้ยเลี้ยงของทุกคนอัตโนมัติ — ถ้าตั้ง &ldquo;อัตราเฉพาะบุคคล&rdquo; ไว้ที่พนักงานคนไหน จะใช้ค่านั้นแทน</p>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full min-w-[420px] text-[13px]">
+              <thead><tr className="bg-ice/70 text-navy">
+                <th className="text-left px-3 py-2 font-bold">ตำแหน่ง</th>
+                <th className="text-right px-3 py-2 font-bold">เพดานที่พัก (฿/คืน)</th>
+                <th className="text-right px-3 py-2 font-bold">เบี้ยเลี้ยง (฿/วัน)</th>
+              </tr></thead>
+              <tbody>
+                {dbRates.map((r, i) => (
+                  <tr key={r.key} className={i % 2 ? "bg-ice/30" : ""}>
+                    <td className="px-3 py-2 font-semibold text-navy">{r.label}</td>
+                    <td className="px-3 py-2 text-right">
+                      <input type="number" min={0} value={r.lodging_cap}
+                        onChange={(e) => { setDbRates((rs) => rs.map((x) => x.key === r.key ? { ...x, lodging_cap: +e.target.value || 0 } : x)); setRatesSaved(false); }}
+                        className="w-28 rounded-lg border border-ice px-2 py-1.5 text-right bg-white" />
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <input type="number" min={0} value={r.per_diem}
+                        onChange={(e) => { setDbRates((rs) => rs.map((x) => x.key === r.key ? { ...x, per_diem: +e.target.value || 0 } : x)); setRatesSaved(false); }}
+                        className="w-28 rounded-lg border border-ice px-2 py-1.5 text-right bg-white" />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </>
   );
 }
