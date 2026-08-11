@@ -435,6 +435,28 @@ function SimpleAmountForm({ placeholder, onTotal }: { placeholder: string; onTot
   );
 }
 
+// อ้างอิงดีล/โปรเจกต์ — เลือก "อื่นๆ" ได้กรณีไม่มีดีล/โปรเจกต์ (เช่น เข้าพบลูกค้าใหม่)
+function RefPicker() {
+  const [ref, setRef] = useState("");
+  const [other, setOther] = useState("");
+  return (
+    <div>
+      <label className="block font-semibold text-navy mb-1">อ้างอิงดีล/โปรเจกต์</label>
+      <select value={ref} onChange={(e) => setRef(e.target.value)}
+        className="w-full max-w-full rounded-lg border border-ice px-3 py-2 bg-white">
+        {deals.map((d) => <option key={d.id} value={d.id}>{d.id} — {d.customer}</option>)}
+        {projects.map((p) => <option key={p.code} value={p.code}>{p.code} — {p.name}</option>)}
+        <option value="__other__">อื่นๆ (ไม่มีดีล/โปรเจกต์ — ระบุเอง)</option>
+      </select>
+      {ref === "__other__" && (
+        <input autoFocus placeholder="เช่น เข้าพบลูกค้าใหม่ / งานแฟร์ / ธุระบริษัท..." value={other}
+          onChange={(e) => setOther(e.target.value)}
+          className="mt-2 w-full rounded-lg border border-amber/50 bg-amber/5 px-3 py-2 text-[13px]" />
+      )}
+    </div>
+  );
+}
+
 function ClaimForm() {
   const [cat, setCat] = useState<ExpenseCategoryKey>("travel");
   const totalRef = useRef(0);
@@ -467,13 +489,7 @@ function ClaimForm() {
           <label className="block font-semibold text-navy mb-1">วัตถุประสงค์ / งานที่ไป</label>
           <input defaultValue="Site Survey ลูกค้าใหม่" className="w-full rounded-lg border border-ice px-3 py-2" />
         </div>
-        <div>
-          <label className="block font-semibold text-navy mb-1">อ้างอิงดีล/โปรเจกต์</label>
-          <select className="w-full max-w-full rounded-lg border border-ice px-3 py-2 bg-white">
-            {deals.map((d) => <option key={d.id}>{d.id} — {d.customer}</option>)}
-            {projects.map((p) => <option key={p.code}>{p.code} — {p.name}</option>)}
-          </select>
-        </div>
+        <RefPicker />
 
         {cat === "travel" && <TravelForm onTotal={setTotal} />}
         {cat === "lodging" && <LodgingForm onTotal={setTotal} />}

@@ -332,6 +332,154 @@ function AttendanceHistory({ refreshKey }: { refreshKey: number }) {
   );
 }
 
+// ── ยื่นลงเวลาย้อนหลัง (ลืมลงเวลา) — รอหัวหน้าอนุมัติ ──
+type TimeReq = {
+  id: number; emp_id: string; work_date: string; check_in_time: string;
+  check_out_time: string | null; reason: string | null; status: string; created_at: string;
+};
+
+function BackfillSection({ onApproved }: { onApproved: () => void }) {
+  const { empId, dept } = useDept();
+  const isSupervisor = dept === "admin" || dept === "management";
+  const [myReqs, setMyReqs] = useState<TimeReq[]>([]);
+  const [pending, setPending] = useState<(TimeReq & { emp_name?: string })[]>([]);
+  const [form, setForm] = useState({ date: "", tin: "", tout: "", reason: "" });
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    if (!supabase) return;
+    const { data: mine } = await supabase.from("time_entry_requests").select("*")
+      .eq("emp_id", empId).order("created_at", { ascending: false }).limit(5);
+    setMyReqs((mine as TimeReq[]) ?? []);
+    if (isSupervisor) {
+      const { data: pend } = await supabase.from("time_entry_requests")
+        .select("*, employees(name)").eq("status", "รออนุมัติ").order("created_at");
+      setPending(((pend ?? []) as (TimeReq & { employees: { name: string } | null })[]).map(r => ({ ...r, emp_name: r.employees?.name })));
+    }
+  }, [empId, isSupervisor]);
+  useEffect(() => { reload(); }, [reload]);
+
+  const submit = async () => {
+    if (!supabase || !form.date || !form.tin) { setMsg("⚠ กรอกวันที่และเวลาเข้างานเป็นอย่างน้อย"); return; }
+    const { error } = await supabase.from("time_entry_requests").insert({
+      emp_id: empId, work_date: form.date, check_in_time: form.tin,
+      check_out_time: form.tout || null, reason: form.reason.trim() || null,
+    });
+    if (error) { setMsg("⚠ " + error.message); return; }
+    setMsg("✓ ส่งคำขอแล้ว — รอหัวหน้างานอนุมัติ");
+    setForm({ date: "", tin: "", tout: "", reason: "" });
+    reload();
+  };
+
+  const review = async (r: TimeReq, approve: boolean) => {
+    if (!supabase) return;
+    await supabase.from("time_entry_requests")
+      .update({ status: approve ? "อนุมัติแล้ว" : "ตีกลับ", reviewed_by: empId }).eq("id", r.id);
+    if (approve) {
+      // สร้างแถวลงเวลาจริงจากคำขอ + คำนวณ OT ถ้าพนักงานเปิดสิทธิ์
+      const cin = new Date(`${r.work_date}T${r.check_in_time}`);
+      const cout = r.check_out_time ? new Date(`${r.work_date}T${r.check_out_time}`) : null;
+      let otMin = 0;
+      if (cout) {
+        const { data: emp } = await supabase.from("employees").select("ot_enabled").eq("id", r.emp_id).single();
+        if (emp?.ot_enabled) {
+          const [eh, em] = workSchedule.end.split(":").map(Number);
+          const end = new Date(cout); end.setHours(eh, em, 0, 0);
+          const m = Math.floor((cout.getTime() - end.getTime()) / 60000);
+          otMin = m >= 30 ? m : 0;
+        }
+      }
+      await supabase.from("attendance").insert({
+        emp_id: r.emp_id, check_in: cin.toISOString(),
+        in_place: "ยื่นย้อนหลัง (อนุมัติแล้ว)",
+        check_out: cout ? cout.toISOString() : null,
+        out_place: cout ? "ยื่นย้อนหลัง (อนุมัติแล้ว)" : null,
+        ot_minutes: otMin || null,
+      });
+      onApproved();
+    }
+    reload();
+  };
+
+  const stColor = (st: string) =>
+    st === "รออนุมัติ" ? "bg-amber/15 text-amber" : st === "อนุมัติแล้ว" ? "bg-brand/10 text-brand" : "bg-ice text-muted";
+
+  return (
+    <div className="grid gap-5 min-[1040px]:grid-cols-2 items-start mb-6">
+      {/* ฟอร์มยื่น */}
+      <div className="card-white p-4 min-[600px]:p-5 min-w-0">
+        <p className="font-bold text-navy text-[15px]">📝 ยื่นลงเวลาย้อนหลัง (กรณีลืมลงเวลา)</p>
+        <p className="text-[11.5px] text-muted mt-0.5">ระบุวัน-เวลาที่ทำงานจริง — มีผลเมื่อหัวหน้างานอนุมัติแล้วเท่านั้น</p>
+        <div className="mt-3 grid grid-cols-2 gap-2.5 text-[13px]">
+          <div className="col-span-2">
+            <label className="block font-semibold text-navy mb-1">วันที่ทำงาน</label>
+            <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })}
+              className="w-full rounded-lg border border-ice px-3 py-2" />
+          </div>
+          <div>
+            <label className="block font-semibold text-navy mb-1">เวลาเข้างาน</label>
+            <input type="time" value={form.tin} onChange={(e) => setForm({ ...form, tin: e.target.value })}
+              className="w-full rounded-lg border border-ice px-3 py-2" />
+          </div>
+          <div>
+            <label className="block font-semibold text-navy mb-1">เวลาเลิกงาน (ถ้ามี)</label>
+            <input type="time" value={form.tout} onChange={(e) => setForm({ ...form, tout: e.target.value })}
+              className="w-full rounded-lg border border-ice px-3 py-2" />
+          </div>
+          <div className="col-span-2">
+            <label className="block font-semibold text-navy mb-1">เหตุผล</label>
+            <input placeholder="เช่น ลืมกด Check In / มือถือแบตหมด / ทำงานที่ไซต์ลูกค้า" value={form.reason}
+              onChange={(e) => setForm({ ...form, reason: e.target.value })}
+              className="w-full rounded-lg border border-ice px-3 py-2" />
+          </div>
+        </div>
+        <button onClick={submit} className="btn btn-primary w-full text-[13.5px] py-2 mt-3">ส่งคำขอ (รอหัวหน้าอนุมัติ)</button>
+        {msg && <p className={`mt-2 text-[12.5px] font-semibold rounded-lg px-3 py-2 ${msg.startsWith("✓") ? "bg-brand/10 text-brand" : "bg-[#D94141]/10 text-[#D94141]"}`}>{msg}</p>}
+        {myReqs.length > 0 && (
+          <div className="mt-3 border-t border-ice pt-2.5 space-y-1.5">
+            <p className="text-[12px] font-bold text-navy">คำขอของฉันล่าสุด</p>
+            {myReqs.map((r) => (
+              <p key={r.id} className="text-[12px] text-muted flex flex-wrap items-center gap-x-2">
+                <span>{new Date(r.work_date + "T00:00:00").toLocaleDateString("th-TH", { day: "numeric", month: "short" })}</span>
+                <span>{r.check_in_time.slice(0, 5)}{r.check_out_time ? ` – ${r.check_out_time.slice(0, 5)}` : ""}</span>
+                <span className={`text-[10.5px] font-bold rounded px-1.5 py-0.5 ${stColor(r.status)}`}>{r.status}</span>
+              </p>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* คิวอนุมัติ (หัวหน้า/แอดมิน) */}
+      {isSupervisor ? (
+        <div className="card-white p-4 min-[600px]:p-5 min-w-0">
+          <p className="font-bold text-navy text-[15px]">✅ คำขอลงเวลาที่รออนุมัติ ({pending.length})</p>
+          <div className="mt-3 space-y-2.5">
+            {pending.map((r) => (
+              <div key={r.id} className="rounded-xl border border-ice p-3 text-[12.5px]">
+                <p className="font-bold text-navy">{r.emp_name ?? r.emp_id}</p>
+                <p className="text-muted mt-0.5">
+                  {new Date(r.work_date + "T00:00:00").toLocaleDateString("th-TH", { weekday: "short", day: "numeric", month: "short" })} ·
+                  เข้า {r.check_in_time.slice(0, 5)}{r.check_out_time ? ` · ออก ${r.check_out_time.slice(0, 5)}` : " (ไม่ระบุเวลาออก)"}
+                </p>
+                {r.reason && <p className="text-[12px] text-ink mt-1 bg-ice/40 rounded px-2 py-1">เหตุผล: {r.reason}</p>}
+                <div className="mt-2 flex gap-2">
+                  <button onClick={() => review(r, true)} className="btn btn-primary text-[12px] py-1.5 px-3">✓ อนุมัติ (ลงเวลาให้เลย)</button>
+                  <button onClick={() => review(r, false)} className="btn btn-outline text-[12px] py-1.5 px-3">ตีกลับ</button>
+                </div>
+              </div>
+            ))}
+            {pending.length === 0 && <p className="text-[12.5px] text-muted/70">ไม่มีคำขอค้างอนุมัติ</p>}
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-ice p-4 text-[12.5px] text-muted/80 self-stretch flex items-center">
+          คำขอจะถูกส่งให้หัวหน้างาน/แอดมินอนุมัติ — เมื่ออนุมัติแล้วเวลาจะเข้าประวัติการลงเวลาอัตโนมัติ (รวมคำนวณ OT ถ้ามีสิทธิ์)
+        </div>
+      )}
+    </div>
+  );
+}
+
 function WorkInfoBody() {
   const [refreshKey, setRefreshKey] = useState(0);
   const bump = useCallback(() => setRefreshKey((k) => k + 1), []);
@@ -342,6 +490,9 @@ function WorkInfoBody() {
         <TimeClock onSaved={bump} />
         <AttendanceHistory refreshKey={refreshKey} />
       </div>
+
+      {/* ── ยื่นลงเวลาย้อนหลัง + อนุมัติ ── */}
+      <BackfillSection onApproved={bump} />
 
       {/* ── การลา ── */}
       <h2 className="text-[17px] font-bold text-navy mb-3">🌴 การลา</h2>
