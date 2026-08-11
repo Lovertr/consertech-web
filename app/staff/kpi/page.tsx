@@ -1,10 +1,45 @@
 "use client";
 
+import { useState } from "react";
+
 // โมดูล KPI / ประเมินผล — จาก personal-kpis + performance-reviews ของ tomas-tech-pm
 // KPI ส่วนบุคคลดึงจากข้อมูลจริงในระบบอัตโนมัติ (CRM/เอกสาร/งาน) ไม่ต้องกรอกเอง
 
 import StaffShell, { useDept } from "@/components/staff/StaffShell";
+import { callCopilot } from "@/lib/copilot";
 import { personalKpis, reviewCycle, teamReviews } from "@/lib/staffData";
+
+// ✨ AI ช่วยร่างประเมินตนเองจากผลงาน (KPI บนหน้านี้)
+function SelfReviewAI() {
+  const [st, setSt] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [text, setText] = useState("");
+  const run = async () => {
+    setSt("loading");
+    try {
+      const j = await callCopilot({
+        action: "self_review",
+        payload: personalKpis.map((k) => `${k.metric}: ${k.value} (เป้า ${k.target}, ${k.pct}%) — ${k.auto}`).join("\n"),
+      });
+      setText(String(j.text ?? ""));
+      setSt("done");
+    } catch (e) { setText(String(e)); setSt("error"); }
+  };
+  return (
+    <>
+      <button onClick={run} disabled={st === "loading"} className="btn btn-primary w-full mt-4 text-[13.5px] py-2 disabled:opacity-60">
+        {st === "loading" ? "⏳ AI กำลังร่างจากผลงานจริง..." : "✨ ให้ AI ช่วยร่างประเมินตนเอง"}
+      </button>
+      {st === "done" && (
+        <div className="mt-3 text-[12.5px] text-ink whitespace-pre-wrap leading-relaxed bg-ice/40 rounded-lg p-3 max-h-72 overflow-y-auto">{text}</div>
+      )}
+      {st === "error" && <p className="mt-2 text-[12px] text-[#D94141]">⚠ {text}</p>}
+      <p className="mt-2 text-[11px] text-muted/70 italic">
+        <span className="text-[10px] font-bold bg-brand/10 text-brand rounded px-1 py-0.5 not-italic mr-1">AI จริง</span>
+        AI ร่างจากตัวเลข KPI บนหน้านี้ — พนักงานแก้ไขก่อนส่งได้
+      </p>
+    </>
+  );
+}
 
 function KpiBody() {
   const { dept } = useDept();
@@ -51,8 +86,7 @@ function KpiBody() {
               </div>
             ))}
           </div>
-          <button className="btn btn-primary w-full mt-4 text-[13.5px] py-2">เริ่มประเมินตนเอง</button>
-          <p className="mt-2 text-[11px] text-muted/70 italic">✨ ระบบจริง: AI ช่วยร่างประเมินตนเองจากผลงานจริงในระบบ (ดีลที่ปิด งานที่เสร็จ โปรเจกต์ที่ส่งมอบ)</p>
+          <SelfReviewAI />
         </div>
 
         {/* ทีม (สำหรับหัวหน้า/ผู้บริหาร) */}

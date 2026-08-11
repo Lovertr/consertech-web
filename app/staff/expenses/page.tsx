@@ -12,6 +12,7 @@ import {
   deals, projects, type ExpenseCategoryKey,
 } from "@/lib/staffData";
 import "leaflet/dist/leaflet.css";
+import { callCopilot } from "@/lib/copilot";
 
 const fmt = (n: number) => n.toLocaleString("th-TH");
 const catMeta = (k: ExpenseCategoryKey) => expenseCategories.find((c) => c.key === k)!;
@@ -27,10 +28,37 @@ function NumField({ label, value, onChange, suffix }: { label: string; value: nu
   );
 }
 
-// แนบรูปใบเสร็จ — อัปโหลดรูปแล้วแสดงตัวอย่างทันที (mockup เก็บในหน่วยความจำ)
+// แนบรูปใบเสร็จ — อัปโหลดแล้ว AI อ่านยอด/ร้านค้า/วันที่ให้จริง
+type ReceiptInfo = { vendor?: string; date?: string; total?: number; vat?: number };
 function ReceiptUpload({ required }: { required: boolean }) {
   const [previews, setPreviews] = useState<string[]>([]);
+  const [ocr, setOcr] = useState<ReceiptInfo | null>(null);
+  const [ocrState, setOcrState] = useState<"idle" | "loading" | "error">("idle");
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const readReceipt = (file: File) => {
+    const r = new FileReader();
+    r.onload = async () => {
+      setOcrState("loading");
+      try {
+        const dataUrl = String(r.result);
+        const m = dataUrl.match(/^data:(image\/\w+);base64,/);
+        const j = await callCopilot({
+          action: "ocr_receipt",
+          image: m ? dataUrl.slice(m[0].length) : dataUrl,
+          mime: m ? m[1] : "image/jpeg",
+        });
+        let raw = String(j.text ?? "").trim();
+        if (raw.startsWith("```")) raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+        const jm = raw.match(/\{[\s\S]*\}/);
+        setOcr(jm ? JSON.parse(jm[0]) : null);
+        setOcrState("idle");
+      } catch {
+        setOcrState("error");
+      }
+    };
+    r.readAsDataURL(file);
+  };
   return (
     <div>
       <label className="block font-semibold text-navy mb-1 text-[13.5px]">
@@ -46,6 +74,7 @@ function ReceiptUpload({ required }: { required: boolean }) {
         onChange={(e) => {
           const files = Array.from(e.target.files ?? []);
           setPreviews((p) => [...p, ...files.map((f) => URL.createObjectURL(f))]);
+          if (files[0]) readReceipt(files[0]); // AI อ่านใบแรกที่แนบ
         }}
         className="hidden"
       />
@@ -65,7 +94,17 @@ function ReceiptUpload({ required }: { required: boolean }) {
           ))}
         </div>
       )}
-      <p className="mt-1 text-[11px] text-muted/70">ระบบจริง: อัปโหลดเข้า Storage + AI อ่านยอด/ร้านค้า/วันที่จากใบเสร็จให้อัตโนมัติ</p>
+      {ocrState === "loading" && <p className="mt-2 text-[12px] text-sky font-semibold">✨ AI กำลังอ่านใบเสร็จ...</p>}
+      {ocr && ocrState === "idle" && (
+        <p className="mt-2 text-[12.5px] bg-brand/10 text-navy rounded-lg px-3 py-2">
+          ✨ <strong>AI อ่านได้:</strong> {ocr.vendor || "-"}{ocr.date ? ` · ${ocr.date}` : ""}
+          {ocr.total ? <> · ยอดรวม <strong className="text-brand">{Number(ocr.total).toLocaleString("th-TH")} ฿</strong></> : ""}
+          {ocr.vat ? ` (VAT ${Number(ocr.vat).toLocaleString("th-TH")}฿)` : ""}
+          <span className="text-muted/70 text-[11px]"> — ใช้ตรวจทานกับยอดที่กรอก</span>
+        </p>
+      )}
+      {ocrState === "error" && <p className="mt-2 text-[12px] text-[#D94141]">⚠ AI อ่านใบเสร็จไม่สำเร็จ — กรอกยอดเองได้ตามปกติ</p>}
+      <p className="mt-1 text-[11px] text-muted/70"><span className="text-[10px] font-bold bg-brand/10 text-brand rounded px-1 py-0.5 mr-1">AI จริง</span>แนบรูปแล้ว AI อ่านยอด/ร้านค้า/วันที่ให้อัตโนมัติ</p>
     </div>
   );
 }

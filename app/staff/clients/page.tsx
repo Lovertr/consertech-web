@@ -5,12 +5,24 @@
 
 import { useState } from "react";
 import StaffShell, { useDept } from "@/components/staff/StaffShell";
+import { callCopilot } from "@/lib/copilot";
 import { clientLinks, clientThread, clientRequests } from "@/lib/staffData";
 
 function ClientsBody() {
   const [selected, setSelected] = useState(0);
   const { access } = useDept();
   const readOnly = access("clients") === "read";
+  const [draft, setDraft] = useState("");
+  const [drafting, setDrafting] = useState(false);
+  const aiDraft = async () => {
+    setDrafting(true);
+    try {
+      const lastMsgs = clientThread.slice(-4).map((t) => `${t.from}: ${t.text}`).join("\n");
+      const j = await callCopilot({ action: "draft_email", payload: `บริบท: ทีม CONSERTECH ตอบลูกค้าใน Client Portal ของโปรเจกต์ติดตั้ง AGV\nบทสนทนาล่าสุด:\n${lastMsgs}\n\nร่างคำตอบสั้นๆ สุภาพ เป็นภาษาไทย ตอบประเด็นล่าสุดของลูกค้า` });
+      setDraft(String(j.text ?? "").replace(/\n+/g, " ").trim());
+    } catch (e) { setDraft("⚠ " + String(e)); }
+    setDrafting(false);
+  };
 
   return (
     <>
@@ -85,11 +97,14 @@ function ClientsBody() {
           {!readOnly && (
             <div className="mt-4 border-t border-ice pt-3">
               <div className="flex gap-2">
-                <input placeholder="พิมพ์ข้อความถึงลูกค้า..." className="flex-1 rounded-xl border border-ice px-4 py-2.5 text-[13.5px]" />
-                <button className="btn btn-primary text-[13px] py-2 px-4">ส่ง</button>
+                <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="พิมพ์ข้อความถึงลูกค้า..." className="flex-1 min-w-0 rounded-xl border border-ice px-4 py-2.5 text-[13.5px]" />
+                <button className="btn btn-primary text-[13px] py-2 px-4 shrink-0">ส่ง</button>
               </div>
               <div className="flex flex-wrap gap-2 mt-2">
-                <button className="text-[11.5px] font-semibold bg-amber/15 text-amber rounded-lg px-2.5 py-1">✨ ให้ AI ร่างคำตอบ</button>
+                <button onClick={aiDraft} disabled={drafting}
+                  className="text-[11.5px] font-semibold bg-amber/15 text-amber rounded-lg px-2.5 py-1 disabled:opacity-60">
+                  {drafting ? "⏳ AI กำลังร่าง..." : "✨ ให้ AI ร่างคำตอบ"}
+                </button>
                 <button className="text-[11.5px] font-semibold bg-ice text-sky rounded-lg px-2.5 py-1">แนบไฟล์</button>
                 <button className="text-[11.5px] font-semibold bg-ice text-sky rounded-lg px-2.5 py-1">แนบสถานะ Milestone ล่าสุด</button>
                 <button className="text-[11.5px] font-semibold bg-ice text-sky rounded-lg px-2.5 py-1">แจ้งเตือนผ่าน Line/อีเมล</button>

@@ -1,9 +1,47 @@
 "use client";
 
+import { useState } from "react";
+
 // ภาพรวมตามแผนก (dummy KPI — รอ data source จริง) ภายใต้ StaffShell เมนูตามสิทธิ์
 
 import { staffDashboards } from "@/lib/data";
 import StaffShell, { useDept } from "@/components/staff/StaffShell";
+import { callCopilot } from "@/lib/copilot";
+
+// ✨ AI สรุปประจำสัปดาห์ — เรียกจริงจากข้อมูลบนหน้า
+function AiWeekly({ data }: { data: { kpis: { label: string; value: string; sub?: string }[]; tableTitle: string; tableHead: string[]; tableRows: string[][] } }) {
+  const [st, setSt] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [text, setText] = useState("");
+  const run = async () => {
+    setSt("loading");
+    try {
+      const j = await callCopilot({
+        action: "weekly_report",
+        payload: [
+          `KPI: ${data.kpis.map((k) => `${k.label}=${k.value}${k.sub ? ` (${k.sub})` : ""}`).join(" | ")}`,
+          `${data.tableTitle}:`,
+          data.tableHead.join(" / "),
+          ...data.tableRows.map((r) => "- " + r.join(" / ")),
+        ].join("\n"),
+      });
+      setText(String(j.text ?? ""));
+      setSt("done");
+    } catch (e) { setText(String(e)); setSt("error"); }
+  };
+  return (
+    <div className="mt-5 rounded-xl border border-amber/50 bg-amber/5 p-4 text-[13px]">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="font-bold text-navy">✨ AI สรุปประจำสัปดาห์ <span className="text-[10px] font-bold bg-brand/10 text-brand rounded px-1.5 py-0.5 align-middle">AI จริง</span></p>
+        <button onClick={run} disabled={st === "loading"} className="btn btn-amber text-[12px] py-1.5 px-3 disabled:opacity-60">
+          {st === "loading" ? "⏳ กำลังสรุป..." : "สร้างสรุปตอนนี้"}
+        </button>
+      </div>
+      {st === "done" && <div className="mt-2 text-ink whitespace-pre-wrap leading-relaxed">{text}</div>}
+      {st === "error" && <p className="mt-2 text-[#D94141]">⚠ {text}</p>}
+      {st === "idle" && <p className="text-muted mt-1">กดปุ่มเพื่อให้ AI วิเคราะห์ตัวเลขบนหน้านี้และสรุปสิ่งที่ควรสั่งการ — ระบบจริงตั้งเวลาส่งเข้าอีเมล/ไลน์ทุกเช้าวันจันทร์ได้</p>}
+    </div>
+  );
+}
 
 function DashboardBody() {
   const { dept } = useDept();
@@ -52,13 +90,7 @@ function DashboardBody() {
         </div>
       </div>
 
-      <div className="mt-5 rounded-xl border border-amber/50 bg-amber/5 p-4 text-[13px]">
-        <p className="font-bold text-navy">✨ AI สรุปประจำสัปดาห์ (ตัวอย่าง)</p>
-        <p className="text-muted mt-1">
-          &ldquo;สัปดาห์นี้มีดีลมูลค่าสูง 2 ดีลรอการตัดสินใจ (A, D) — แนะนำ follow-up ภายในพฤหัส · โปรเจกต์ PJ-2569-02 ใกล้ถึง Acceptance Test ควรเตรียมเอกสาร · ใบแจ้งหนี้ INV-2569-025 ครบกำหนด 8 ส.ค.&rdquo;
-          — ระบบจริงส่งสรุปแบบนี้เข้าอีเมล/ไลน์ทุกเช้าวันจันทร์อัตโนมัติ
-        </p>
-      </div>
+      <AiWeekly data={data} />
     </>
   );
 }

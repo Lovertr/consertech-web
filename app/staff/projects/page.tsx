@@ -4,7 +4,8 @@
 
 import { useState } from "react";
 import StaffShell, { useDept } from "@/components/staff/StaffShell";
-import { projects, tickets, ganttMonths, ganttRows, type Project } from "@/lib/staffData";
+import { projects, tickets, ganttMonths, ganttRows, knowledgeBase, type Project } from "@/lib/staffData";
+import { callCopilot } from "@/lib/copilot";
 
 // Gantt chart อย่างง่าย (จากโมดูล gantt ของ tomas-tech-pm)
 function GanttSection() {
@@ -54,6 +55,39 @@ function GanttSection() {
           <span className="ml-3">— ระบบจริงลากปรับแผนได้และซิงก์กับ Milestone/งวดจ่ายอัตโนมัติ</span>
         </p>
       </div>
+    </div>
+  );
+}
+
+// ✨ AI ผู้ช่วยวิศวกร — ถาม-ตอบเชิงเทคนิคจริง (แนบคลังความรู้ภายในเป็นบริบท)
+function EngineerQA() {
+  const [q, setQ] = useState("");
+  const [st, setSt] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [a, setA] = useState("");
+  const ask = async () => {
+    if (!q.trim()) return;
+    setSt("loading");
+    try {
+      const kb = knowledgeBase.map((k) => `- ${k.topic} (แหล่ง: ${k.source})`).join("\n");
+      const j = await callCopilot({ action: "engineer_qa", payload: `คลังความรู้ภายใน:\n${kb}\n\nคำถาม: ${q.trim()}` });
+      setA(String(j.text ?? ""));
+      setSt("done");
+    } catch (e) { setA(String(e)); setSt("error"); }
+  };
+  return (
+    <div className="mt-4 rounded-xl border border-amber/50 bg-amber/5 p-3.5 text-[12.5px]">
+      <p className="font-bold text-navy">✨ AI ผู้ช่วยวิศวกร <span className="text-[10px] font-bold bg-brand/10 text-brand rounded px-1.5 py-0.5 align-middle">AI จริง</span></p>
+      <div className="mt-2 flex gap-2">
+        <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") ask(); }}
+          placeholder="เช่น ตั้งค่า Protective Field ของ PICOSCAN ที่ 1.2 m/s ยังไง?"
+          className="flex-1 min-w-0 rounded-lg border border-ice px-3 py-1.5 text-[12.5px] bg-white" />
+        <button onClick={ask} disabled={st === "loading"} className="btn btn-amber text-[12px] py-1.5 px-3 disabled:opacity-60 shrink-0">
+          {st === "loading" ? "⏳" : "ถาม"}
+        </button>
+      </div>
+      {st === "done" && <div className="mt-2.5 text-ink whitespace-pre-wrap leading-relaxed bg-white rounded-lg border border-ice p-3">{a}</div>}
+      {st === "error" && <p className="mt-2 text-[#D94141]">⚠ {a}</p>}
+      <p className="mt-1.5 text-[10.5px] text-muted/70">เฟสถัดไป: เชื่อมเอกสาร Master 180 หน้าเข้าฐานความรู้ (RAG) เพื่อตอบตามคู่มือบริษัทโดยตรง</p>
     </div>
   );
 }
@@ -125,10 +159,7 @@ function ProjectsBody() {
           {!readOnly && (
             <button className="btn btn-outline text-[13px] py-2 mt-3">＋ เพิ่มเกณฑ์ทดสอบ (จาก Template TPL-AT)</button>
           )}
-          <div className="mt-4 rounded-xl border border-amber/50 bg-amber/5 p-3.5 text-[12.5px]">
-            <p className="font-bold text-navy">✨ AI ผู้ช่วยวิศวกร</p>
-            <p className="text-muted mt-1">&ldquo;ถามจากคู่มือ: ตั้งค่า Protective Field ของ PICOSCAN สำหรับความเร็ว 1.2 m/s ยังไง?&rdquo; — ระบบจริงตอบจากเอกสาร Master 180 หน้าได้ทันที</p>
-          </div>
+          <EngineerQA />
         </div>
       </div>
 
