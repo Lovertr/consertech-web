@@ -153,6 +153,7 @@ function BizCardScan({ onAddLead, addLabel = "＋ เพิ่มเป็น Le
           <span><strong className="text-navy">โทร:</strong> {fields.phone ?? "-"}</span>
           <span><strong className="text-navy">อีเมล:</strong> {fields.email ?? "-"}</span>
           {fields.line_id && <span><strong className="text-navy">LINE:</strong> {fields.line_id}</span>}
+          {fields.tax_id && <span><strong className="text-navy">Tax ID:</strong> {fields.tax_id}</span>}
           {fields.address && <span className="w-full"><strong className="text-navy">ที่อยู่:</strong> {fields.address}{[fields.subdistrict, fields.district, fields.province, fields.postcode].filter(Boolean).length > 0 && ` · ${[fields.subdistrict, fields.district, fields.province, fields.postcode].filter(Boolean).join(" ")}`}</span>}
           {state === "added" ? (
             <span className="ml-auto text-[12px] font-bold text-[#2E9E5B]">{doneMsg}</span>
@@ -191,10 +192,11 @@ async function upsertFromCard(f: Record<string, string | null>, empId?: string):
     province: (f.province ?? "").trim() || null,
     postcode: (f.postcode ?? "").trim() || null,
   };
+  const cardTaxId = (f.tax_id ?? "").replace(/[^0-9]/g, "") || null; // เก็บเฉพาะตัวเลข 13 หลัก
   // เทียบชื่อแบบ normalize กับทุกบริษัทที่มี (กันซ้ำจากจุด/คอมมา/ช่องว่างต่างกัน)
-  const { data: allNames } = await supabase.from("customers").select("id,name,contact_name,address,province");
+  const { data: allNames } = await supabase.from("customers").select("id,name,contact_name,address,province,tax_id");
   const target = normCompany(companyName);
-  const existing = ((allNames as { id: number; name: string; contact_name: string | null; address: string | null; province: string | null }[]) ?? [])
+  const existing = ((allNames as { id: number; name: string; contact_name: string | null; address: string | null; province: string | null; tax_id: string | null }[]) ?? [])
     .find((c) => normCompany(c.name) === target) ?? null;
   let customerId: number;
   let createdCompany = false;
@@ -204,11 +206,12 @@ async function upsertFromCard(f: Record<string, string | null>, empId?: string):
     if (!existing.contact_name && contactName) { patch.contact_name = contactName; patch.phone = f.phone ?? null; patch.email = f.email ?? null; }
     if (!existing.address && address) patch.address = address; // เติมที่อยู่จากนามบัตรให้ถ้ายังไม่มี
     if (!existing.province && parts.province) Object.assign(patch, parts);
+    if (!existing.tax_id && cardTaxId) patch.tax_id = cardTaxId; // เติม Tax ID จากนามบัตรให้ถ้ายังไม่มี
     if (Object.keys(patch).length) await supabase.from("customers").update(patch).eq("id", customerId);
   } else {
     const { data: cust, error } = await supabase.from("customers").insert({
       name: companyName, contact_name: contactName, phone: f.phone ?? null, email: f.email ?? null, line_id: f.line_id ?? null, address, ...parts,
-      owner: empId || null,
+      tax_id: cardTaxId, owner: empId || null,
     }).select("id").single();
     if (error) throw error;
     customerId = cust.id;
