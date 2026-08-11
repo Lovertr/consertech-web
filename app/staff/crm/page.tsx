@@ -359,6 +359,13 @@ function DealDetail({
     onChanged();
   };
 
+  const removeDeal = async () => {
+    if (!supabase) return;
+    if (!confirm(`ลบดีล ${dealCode(deal.id)} — ${deal.customer_name}?\n(ประวัติกิจกรรมและคอมเมนต์ของดีลนี้จะถูกลบด้วย — ข้อมูลลูกค้าไม่ถูกลบ)`)) return;
+    await supabase.from("deals").delete().eq("id", deal.id);
+    onChanged();
+  };
+
   const runLeadScore = async () => {
     setScoring(true);
     setScoreErr("");
@@ -416,6 +423,8 @@ function DealDetail({
                 {scoring ? "⏳ AI กำลังให้คะแนน..." : deal.lead_score === null ? "✨ AI ให้คะแนน Lead" : "✨ ให้คะแนนใหม่"}
               </button>
               <Link href="/staff/documents" className="btn btn-primary text-[13px] py-2 px-3.5">สร้างใบเสนอราคา</Link>
+              <button onClick={removeDeal} title="ลบดีลนี้ (กรณีเพิ่มผิด)"
+                className="text-[12px] font-semibold text-[#D94141]/70 hover:text-[#D94141] px-1.5">🗑 ลบดีล</button>
             </>
           )}
         </div>
@@ -559,22 +568,6 @@ function CrmBody() {
     load();
   }, [deals, empId, load]);
 
-  const addLeadFromCard = async (f: Record<string, string | null>) => {
-    if (!supabase) throw new Error("ยังไม่ได้เชื่อมต่อฐานข้อมูล");
-    const r = await upsertFromCard(f);
-    const { data: deal, error: e2 } = await supabase.from("deals").insert({
-      customer_id: r.customerId, customer_name: r.companyName, stage: "lead", value_level: "กลาง",
-      owner: empId || null, next_action: "โทรแนะนำบริษัทและคัดกรองความต้องการ",
-    }).select("id").single();
-    if (e2) throw e2;
-    await supabase.from("deal_activities").insert({ deal_id: deal.id, emp_id: empId || null, type: "Lead", note: "เพิ่มจากสแกนนามบัตรด้วย AI" });
-    await load();
-    setSelectedId(deal.id);
-    return r.createdCompany
-      ? `✅ เพิ่มบริษัทใหม่ + ผู้ติดต่อ + Lead แล้ว`
-      : `✅ บริษัทมีอยู่แล้ว — เพิ่ม "${r.contactName ?? "ผู้ติดต่อ"}" เป็นผู้ติดต่อ + สร้าง Lead ใหม่`;
-  };
-
   if (!supabase) {
     return <p className="text-[13px] text-muted bg-ice/50 rounded-lg px-3 py-2 inline-block">⚠ ยังไม่ได้เชื่อมต่อฐานข้อมูล</p>;
   }
@@ -586,7 +579,6 @@ function CrmBody() {
           👁️ แผนกของคุณดูข้อมูลได้อย่างเดียว — แก้ไขได้เฉพาะฝ่ายขาย
         </p>
       )}
-      {!readOnly && <BizCardScan onAddLead={addLeadFromCard} />}
       {!readOnly && <AddDealForm customers={customers} empId={empId} onDone={load} />}
 
       {/* Pipeline */}

@@ -147,9 +147,27 @@ function UsersBody() {
         </p>
       )}
 
-      <p className={`mb-3 text-[11.5px] font-semibold rounded-lg px-3 py-1.5 inline-block ${dbStatus === "db" ? "bg-brand/10 text-brand" : "bg-ice text-muted"}`}>
-        {dbStatus === "db" ? "🟢 เชื่อมต่อฐานข้อมูลจริง (Supabase) — การแก้ไขถูกบันทึกถาวร" : dbStatus === "local" ? "⚪ โหมดเดโม — ยังไม่เชื่อมฐานข้อมูล บันทึกในเบราว์เซอร์" : "⏳ กำลังเชื่อมต่อ..."}
-      </p>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <p className={`text-[11.5px] font-semibold rounded-lg px-3 py-1.5 inline-block ${dbStatus === "db" ? "bg-brand/10 text-brand" : "bg-ice text-muted"}`}>
+          {dbStatus === "db" ? "🟢 เชื่อมต่อฐานข้อมูลจริง (Supabase) — การแก้ไขถูกบันทึกถาวร" : dbStatus === "local" ? "⚪ โหมดเดโม — ยังไม่เชื่อมฐานข้อมูล บันทึกในเบราว์เซอร์" : "⏳ กำลังเชื่อมต่อ..."}
+        </p>
+        {!readOnly && (
+          <button
+            onClick={async () => {
+              if (!supabase) return;
+              if (!confirm("ล้างข้อมูลทดสอบทั้งหมด?\n(ลูกค้า/ดีล/ใบเสนอราคา/โปรเจกต์/ประชุม/งาน/สินค้า ที่เป็น seed เดิม — ข้อมูลจริงที่เพิ่ม/สแกนเข้ามาจะไม่ถูกลบ)\nการลบนี้ย้อนกลับไม่ได้")) return;
+              const { data, error } = await supabase.rpc("purge_demo_data");
+              if (error) { alert("ลบไม่สำเร็จ: " + error.message); return; }
+              const r = data as Record<string, number>;
+              alert(`🧹 ล้างข้อมูลทดสอบแล้ว:\nดีล ${r.deals} · ลูกค้า ${r.customers} · ใบเสนอราคา ${r.quotations} · โปรเจกต์ ${r.projects} · Ticket ${r.tickets} · ประชุม ${r.meetings} · งาน ${r.tasks} · สินค้า ${r.products}`);
+              location.reload();
+            }}
+            className="text-[11.5px] font-bold rounded-lg px-3 py-1.5 bg-[#D94141]/10 text-[#D94141] hover:bg-[#D94141]/20"
+            title="ลบข้อมูล seed ทดสอบทั้งหมด (ข้อมูลจริงไม่ถูกแตะ) — ทำได้เฉพาะแอดมิน/ผู้บริหาร">
+            🧹 ล้างข้อมูลทดสอบ
+          </button>
+        )}
+      </div>
 
       <div className="grid gap-5 min-[1040px]:grid-cols-[300px_1fr] items-start">
         {/* รายชื่อพนักงาน */}
