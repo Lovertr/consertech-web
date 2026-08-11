@@ -6,27 +6,51 @@ import { useState } from "react";
 import Link from "next/link";
 import StaffShell, { useDept } from "@/components/staff/StaffShell";
 import { deals, dealStages, type Deal } from "@/lib/staffData";
+import { callCopilot } from "@/lib/copilot";
+import { useRef } from "react";
+
+
 
 function AiSummary({ deal }: { deal: Deal }) {
-  const [state, setState] = useState<"idle" | "loading" | "done">("idle");
+  const [state, setState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [text, setText] = useState("");
+
+  const run = async () => {
+    setState("loading");
+    try {
+      const j = await callCopilot({
+        action: "summarize_deal",
+        payload: [
+          `บริษัทเรา: CONSERTECH ผู้ขายระบบ AGV และอุปกรณ์อัตโนมัติในโรงงาน`,
+          `ลูกค้า: ${deal.customer} (${deal.industry})`,
+          `โซลูชันที่สนใจ: ${deal.solution}`,
+          `ขั้นดีล: ${dealStages.find((s) => s.key === deal.stage)?.label} | มูลค่าระดับ: ${deal.value}`,
+          `งานถัดไปที่วางไว้: ${deal.nextAction}`,
+          `ประวัติกิจกรรม:`,
+          ...deal.activities.map((a) => `- ${a.date} ${a.type}: ${a.note}`),
+        ].join("\n"),
+      });
+      setText(String(j.text ?? ""));
+      setState("done");
+    } catch (e) {
+      setText(String(e));
+      setState("error");
+    }
+  };
+
   return (
     <div className="mt-4 rounded-xl border border-amber/50 bg-amber/5 p-4">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[13px] font-bold text-navy">✨ AI ผู้ช่วยฝ่ายขาย</p>
-        <button
-          onClick={() => { setState("loading"); setTimeout(() => setState("done"), 900); }}
-          className="btn btn-amber text-[12.5px] py-1.5 px-3"
-        >
-          {state === "loading" ? "กำลังวิเคราะห์..." : "สรุปดีลนี้ให้หน่อย"}
+        <p className="text-[13px] font-bold text-navy">✨ AI ผู้ช่วยฝ่ายขาย <span className="text-[10px] font-bold bg-brand/10 text-brand rounded px-1.5 py-0.5 align-middle">AI จริง</span></p>
+        <button onClick={run} disabled={state === "loading"} className="btn btn-amber text-[12.5px] py-1.5 px-3 disabled:opacity-60">
+          {state === "loading" ? "⏳ AI กำลังวิเคราะห์..." : "สรุปดีลนี้ให้หน่อย"}
         </button>
       </div>
       {state === "done" && (
-        <div className="mt-3 text-[13px] leading-relaxed text-ink space-y-1.5">
-          <p><strong className="text-brand">สรุป:</strong> {deal.customer} ({deal.industry}) สนใจ {deal.solution} — อยู่ขั้น &ldquo;{dealStages.find(s => s.key === deal.stage)?.label}&rdquo; มูลค่าระดับ{deal.value} มีกิจกรรมล่าสุด {deal.activities.length} รายการ</p>
-          <p><strong className="text-brand">สิ่งที่ควรทำถัดไป:</strong> {deal.nextAction}</p>
-          <p><strong className="text-brand">ข้อเสนอแนะ:</strong> ลูกค้ากลุ่ม{deal.industry}มักถามเรื่องมาตรฐานความปลอดภัยและ ROI — เตรียมเคสอ้างอิงและตาราง Payback ไปด้วย</p>
-          <p className="text-[11px] text-muted/70 italic">* คำตอบจำลองเพื่อเดโม — ระบบจริงเชื่อม Claude API + ข้อมูลดีลจริง</p>
-        </div>
+        <div className="mt-3 text-[13px] leading-relaxed text-ink whitespace-pre-wrap">{text}</div>
+      )}
+      {state === "error" && (
+        <p className="mt-3 text-[12.5px] text-[#D94141] bg-[#D94141]/10 rounded-lg px-3 py-2">⚠ {text}</p>
       )}
     </div>
   );
@@ -34,28 +58,61 @@ function AiSummary({ deal }: { deal: Deal }) {
 
 // สแกนนามบัตรด้วย AI (จาก ai/scan-business-card ของ tomas-tech-pm)
 function BizCardScan() {
-  const [state, setState] = useState<"idle" | "scanning" | "done">("idle");
+  const [state, setState] = useState<"idle" | "scanning" | "done" | "error">("idle");
+  const [fields, setFields] = useState<Record<string, string | null>>({});
+  const [err, setErr] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const scan = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      setState("scanning");
+      try {
+        const dataUrl = String(reader.result);
+        const m = dataUrl.match(/^data:(image\/\w+);base64,/);
+        const j = await callCopilot({
+          action: "ocr_card",
+          image: m ? dataUrl.slice(m[0].length) : dataUrl,
+          mime: m ? m[1] : "image/jpeg",
+        });
+        // edge function คืน JSON ในรูป text → parse
+        let raw = String(j.text ?? "").trim();
+        if (raw.startsWith("```")) raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+        const jm = raw.match(/\{[\s\S]*\}/);
+        const f = jm ? JSON.parse(jm[0]) : {};
+        setFields({ ...f, company_name: f.company ?? f.company_name ?? null });
+        setState("done");
+      } catch (e) {
+        setErr(String(e));
+        setState("error");
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   return (
     <div className="mb-4 rounded-xl border border-dashed border-sky/60 bg-ice/30 p-3.5">
+      <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) scan(f); e.target.value = ""; }} />
       <div className="flex flex-wrap items-center gap-3">
-        <button
-          onClick={() => { setState("scanning"); setTimeout(() => setState("done"), 1100); }}
-          className="btn btn-outline text-[13px] py-2 px-3.5"
-        >
+        <button onClick={() => fileRef.current?.click()} disabled={state === "scanning"}
+          className="btn btn-outline text-[13px] py-2 px-3.5 disabled:opacity-60">
           {state === "scanning" ? "✨ AI กำลังอ่านนามบัตร..." : "📇 สแกนนามบัตร (ถ่ายรูป/อัปโหลด)"}
         </button>
-        <p className="text-[12px] text-muted">ได้นามบัตรจากงานแฟร์/เข้าพบลูกค้า → ถ่ายรูปแล้ว AI กรอกข้อมูลเข้า CRM ให้อัตโนมัติ</p>
+        <p className="text-[12px] text-muted">ถ่ายรูปนามบัตรแล้ว AI อ่านข้อมูลกรอกให้จริง <span className="text-[10px] font-bold bg-brand/10 text-brand rounded px-1.5 py-0.5">AI จริง</span></p>
       </div>
       {state === "done" && (
         <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-[12.5px] bg-white rounded-lg border border-ice p-3">
-          <span><strong className="text-navy">ชื่อ:</strong> คุณประวิทย์ ใจดี</span>
-          <span><strong className="text-navy">ตำแหน่ง:</strong> ผจก.ฝ่ายผลิต</span>
-          <span><strong className="text-navy">บริษัท:</strong> โรงงานพลาสติก H</span>
-          <span><strong className="text-navy">โทร:</strong> 08x-xxx-1234</span>
-          <span><strong className="text-navy">อีเมล:</strong> prawit@example.co.th</span>
+          <span><strong className="text-navy">ชื่อ:</strong> {[fields.first_name, fields.last_name].filter(Boolean).join(" ") || "-"}</span>
+          <span><strong className="text-navy">ตำแหน่ง:</strong> {fields.position ?? "-"}</span>
+          <span><strong className="text-navy">บริษัท:</strong> {fields.company_name ?? "-"}</span>
+          <span><strong className="text-navy">โทร:</strong> {fields.phone ?? "-"}</span>
+          <span><strong className="text-navy">อีเมล:</strong> {fields.email ?? "-"}</span>
+          {fields.line_id && <span><strong className="text-navy">LINE:</strong> {fields.line_id}</span>}
           <button className="btn btn-primary text-[11.5px] py-1 px-2.5 ml-auto">＋ เพิ่มเป็น Lead ใหม่</button>
         </div>
       )}
+      {state === "error" && <p className="mt-2 text-[12.5px] text-[#D94141]">⚠ {err}</p>}
     </div>
   );
 }

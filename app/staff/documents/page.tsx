@@ -5,6 +5,7 @@
 import { useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import StaffShell, { useDept } from "@/components/staff/StaffShell";
+import { callCopilot } from "@/lib/copilot";
 import { products, quotations, proposals, deals } from "@/lib/staffData";
 
 const fmt = (n: number) => n.toLocaleString("th-TH");
@@ -117,7 +118,31 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
 function ProposalTab({ readOnly }: { readOnly: boolean }) {
   const sections = ["แนะนำบริษัท", "ปัญหาและโจทย์ของลูกค้า (จาก Site Survey)", "โซลูชันที่เสนอ + สเปกอุปกรณ์", "Scope of Work", "แผนงานและ Timeline", "เงื่อนไขชำระเงิน + รับประกัน"];
   const [checked, setChecked] = useState<boolean[]>(sections.map(() => true));
-  const [state, setState] = useState<"idle" | "loading" | "done">("idle");
+  const [dealId, setDealId] = useState(deals.filter((d) => d.stage !== "won")[0]?.id ?? "");
+  const [state, setState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [text, setText] = useState("");
+
+  const run = async () => {
+    setState("loading");
+    try {
+      const deal = deals.find((d) => d.id === dealId);
+      const j = await callCopilot({
+        action: "ask",
+        payload: [
+          "ร่าง Proposal (เอกสารนำเสนอโครงการ) ภาษาไทยแบบพร้อมใช้เป็นร่างแรกจริง สำหรับ CONSERTECH CO., LTD. — ที่ปรึกษาและวิศวกรระบบ Intra-Logistic Automation (LiDAR-Guided AGV) ทีมวิศวกรไทย ติดตั้งจริง ดูแลหลังการขายเอง",
+          `ลูกค้า: ${deal?.customer} (${deal?.industry}) | โซลูชันที่สนใจ: ${deal?.solution}`,
+          "บันทึกกิจกรรม/Survey:",
+          ...(deal?.activities.map((a) => `- ${a.date} ${a.type}: ${a.note}`) ?? []),
+          `หัวข้อที่ต้องมี: ${sections.filter((_, i) => checked[i]).join(", ")}`,
+        ].join("\n"),
+      });
+      setText(String(j.text ?? ""));
+      setState("done");
+    } catch (e) {
+      setText(String(e));
+      setState("error");
+    }
+  };
 
   return (
     <div className="grid gap-5 min-[1040px]:grid-cols-[380px_1fr] items-start">
@@ -125,8 +150,9 @@ function ProposalTab({ readOnly }: { readOnly: boolean }) {
         <p className="text-[11px] font-bold text-sky">เลขที่เอกสาร</p>
         <p className="font-bold text-navy text-[18px]">PR-2569-008 <span className="text-[11px] font-semibold text-muted">(ร่าง)</span></p>
         <label className="block text-[12.5px] font-semibold text-navy mt-3 mb-1">ดีลอ้างอิง</label>
-        <select className="w-full text-[13.5px] rounded-lg border border-ice px-3 py-2 bg-white" disabled={readOnly}>
-          {deals.filter((d) => d.stage !== "won").map((d) => <option key={d.id}>{d.id} — {d.customer}</option>)}
+        <select value={dealId} onChange={(e) => setDealId(e.target.value)}
+          className="w-full text-[13.5px] rounded-lg border border-ice px-3 py-2 bg-white" disabled={readOnly}>
+          {deals.filter((d) => d.stage !== "won").map((d) => <option key={d.id} value={d.id}>{d.id} — {d.customer}</option>)}
         </select>
         <p className="text-[12.5px] font-semibold text-navy mt-4 mb-1.5">หัวข้อที่ใส่ใน Proposal</p>
         {sections.map((s, i) => (
@@ -137,36 +163,33 @@ function ProposalTab({ readOnly }: { readOnly: boolean }) {
           </label>
         ))}
         {!readOnly && (
-          <button
-            onClick={() => { setState("loading"); setTimeout(() => setState("done"), 1200); }}
-            className="btn btn-amber w-full mt-4 text-[14px]"
-          >
+          <button onClick={run} disabled={state === "loading"} className="btn btn-amber w-full mt-4 text-[14px] disabled:opacity-60">
             {state === "loading" ? "✨ AI กำลังร่างเอกสาร..." : "✨ ให้ AI ร่าง Proposal"}
           </button>
         )}
-        <p className="mt-2 text-[11px] text-muted/70 italic">AI ดึงข้อมูลจาก: บันทึก Survey ในดีล + ข้อมูล Master + Template บริษัท</p>
+        <p className="mt-2 text-[11px] text-muted/70 italic">
+          <span className="text-[10px] font-bold bg-brand/10 text-brand rounded px-1.5 py-0.5 not-italic mr-1">AI จริง</span>
+          AI ใช้ข้อมูล: บันทึกกิจกรรม/Survey ในดีล + หัวข้อที่เลือก — ร่างแรกเพื่อให้พนักงานตรวจแก้
+        </p>
       </div>
 
       <div className="card-white p-6 min-h-[380px] min-w-0">
-        {state !== "done" ? (
+        {state === "idle" || state === "loading" ? (
           <div className="h-full flex flex-col items-center justify-center text-center text-muted py-16">
-            <p className="text-4xl">📄</p>
-            <p className="mt-3 text-[14px]">เลือกดีลและหัวข้อ แล้วกด &ldquo;ให้ AI ร่าง Proposal&rdquo;<br />ตัวอย่างเอกสารจะแสดงตรงนี้</p>
+            <p className="text-4xl">{state === "loading" ? "⏳" : "📄"}</p>
+            <p className="mt-3 text-[14px]">
+              {state === "loading" ? "AI กำลังร่างเอกสารจากข้อมูลดีลจริง..." : <>เลือกดีลและหัวข้อ แล้วกด &ldquo;ให้ AI ร่าง Proposal&rdquo;<br />ร่างเอกสารจะแสดงตรงนี้</>}
+            </p>
           </div>
+        ) : state === "error" ? (
+          <p className="text-[13px] text-[#D94141] bg-[#D94141]/10 rounded-lg px-3 py-2">⚠ {text}</p>
         ) : (
-          <div className="text-[13.5px] leading-relaxed space-y-3">
-            <p className="text-[11px] font-bold text-amber">✨ ร่างโดย AI — รอพนักงานตรวจแก้ก่อนส่งจริง</p>
-            <h3 className="text-[18px] font-bold text-navy">ข้อเสนอโครงการ: ระบบ Lifter AGV x3 + Fleet Management System</h3>
-            <p className="text-muted text-[12px]">เรียน โรงงานชิ้นส่วนยานยนต์ A | อ้างอิงการสำรวจหน้างานวันที่ 2 ส.ค. 2569</p>
-            <p><strong className="text-brand">1. แนะนำบริษัท —</strong> บริษัท คันเซอร์เทคช์ จำกัด ที่ปรึกษาและวิศวกรระบบ Intra-Logistic Automation... (ดึงจาก Template บริษัท)</p>
-            <p><strong className="text-brand">2. โจทย์ของท่าน —</strong> จากการสำรวจ: ลำเลียงชิ้นส่วนจากคลังเข้าไลน์ประกอบ ระยะ 120 ม. น้ำหนักเฉลี่ย 450 กก./เที่ยว ปัจจุบันใช้พนักงาน 4 คน/กะ...</p>
-            <p><strong className="text-brand">3. โซลูชันที่เสนอ —</strong> Lifter/Underride AGV จำนวน 3 คัน (รองรับ 600 กก. เผื่อ 33%) นำทางด้วย PICOSCAN LOC + ระบบ FMS จ่ายงานอัตโนมัติ... สเปกอุปกรณ์ดึงจากข้อมูล Master 8 รายการ</p>
-            <p><strong className="text-brand">4. Scope of Work —</strong> ตาม Template TPL-SOW: ออกแบบ → ติดตั้ง → ทดสอบ → อบรม → ส่งมอบเอกสารครบชุด</p>
-            <p><strong className="text-brand">5. Timeline —</strong> 10 สัปดาห์นับจากเซ็นสัญญา แบ่ง 4 งวดตาม Milestone...</p>
-            <p className="text-[11px] text-muted/70 italic">* เนื้อหาจำลองเพื่อเดโม — ระบบจริงสร้างเอกสารเต็มพร้อม Export PDF ตามแบรนด์บริษัท</p>
-            <div className="flex gap-2 pt-1">
+          <div className="text-[13.5px] leading-relaxed">
+            <p className="text-[11px] font-bold text-amber mb-2">✨ ร่างโดย AI — รอพนักงานตรวจแก้ก่อนส่งจริง</p>
+            <div className="whitespace-pre-wrap">{text}</div>
+            <div className="flex gap-2 pt-3">
               <button className="btn btn-primary text-[13px] py-2">บันทึกร่าง</button>
-              <button className="btn btn-outline text-[13px] py-2">Export PDF</button>
+              <button className="btn btn-outline text-[13px] py-2">Export PDF (เฟสถัดไป)</button>
             </div>
           </div>
         )}
