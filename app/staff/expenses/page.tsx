@@ -9,10 +9,11 @@ import StaffShell from "@/components/staff/StaffShell";
 import {
   expenseClaims, expensePolicy, expenseCategories, mapPlaces, roadKm,
   expenseRatesByPosition, type PositionKey,
-  deals, projects, type ExpenseCategoryKey,
+  projects, type ExpenseCategoryKey,
 } from "@/lib/staffData";
 import "leaflet/dist/leaflet.css";
 import { callCopilot } from "@/lib/copilot";
+import { supabase } from "@/lib/supabase";
 
 const fmt = (n: number) => n.toLocaleString("th-TH");
 const catMeta = (k: ExpenseCategoryKey) => expenseCategories.find((c) => c.key === k)!;
@@ -478,12 +479,17 @@ function SimpleAmountForm({ placeholder, onTotal }: { placeholder: string; onTot
 function RefPicker() {
   const [ref, setRef] = useState("");
   const [other, setOther] = useState("");
+  const [dbDeals, setDbDeals] = useState<{ id: number; customer_name: string }[]>([]);
+  useEffect(() => {
+    supabase?.from("deals").select("id,customer_name").order("created_at", { ascending: false })
+      .then(({ data }) => setDbDeals((data as { id: number; customer_name: string }[]) ?? []));
+  }, []);
   return (
     <div>
       <label className="block font-semibold text-navy mb-1">อ้างอิงดีล/โปรเจกต์</label>
       <select value={ref} onChange={(e) => setRef(e.target.value)}
         className="w-full max-w-full rounded-lg border border-ice px-3 py-2 bg-white">
-        {deals.map((d) => <option key={d.id} value={d.id}>{d.id} — {d.customer}</option>)}
+        {dbDeals.map((d) => <option key={d.id} value={`D-${String(d.id).padStart(3, "0")}`}>D-{String(d.id).padStart(3, "0")} — {d.customer_name}</option>)}
         {projects.map((p) => <option key={p.code} value={p.code}>{p.code} — {p.name}</option>)}
         <option value="__other__">อื่นๆ (ไม่มีดีล/โปรเจกต์ — ระบุเอง)</option>
       </select>

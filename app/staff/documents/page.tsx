@@ -2,13 +2,27 @@
 
 // โมดูลเอกสารขาย — ใบเสนอราคา (สร้างจากข้อมูล Master) + Proposal (AI ร่าง จำลอง) + ทะเบียนเอกสาร
 
-import { useState, Suspense } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import StaffShell, { useDept } from "@/components/staff/StaffShell";
 import { callCopilot } from "@/lib/copilot";
-import { products, quotations, proposals, deals } from "@/lib/staffData";
+import { products, quotations, proposals } from "@/lib/staffData";
+import { supabase } from "@/lib/supabase";
 
 const fmt = (n: number) => n.toLocaleString("th-TH");
+
+// ดีลจริงจากฐานข้อมูล (โมดูล CRM)
+type DbDealLite = { id: number; customer_name: string; industry: string | null; solution: string | null; stage: string };
+const dealCode = (id: number) => `D-${String(id).padStart(3, "0")}`;
+function useDbDeals() {
+  const [list, setList] = useState<DbDealLite[]>([]);
+  useEffect(() => {
+    supabase?.from("deals").select("id,customer_name,industry,solution,stage")
+      .order("created_at", { ascending: false })
+      .then(({ data }) => setList((data as DbDealLite[]) ?? []));
+  }, []);
+  return list;
+}
 
 function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
   const [items, setItems] = useState<{ code: string; qty: number }[]>([
@@ -17,6 +31,8 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
     { code: "SVC-001", qty: 3 },
   ]);
   const [customer, setCustomer] = useState("โรงงานชิ้นส่วนยานยนต์ A");
+  const dbDeals = useDbDeals();
+  const customerNames = [...new Set(dbDeals.map((d) => d.customer_name))];
 
   const rows = items.map((it) => {
     const p = products.find((x) => x.code === it.code)!;
@@ -35,7 +51,8 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
           </div>
           <select value={customer} onChange={(e) => setCustomer(e.target.value)} disabled={readOnly}
             className="text-[13.5px] rounded-lg border border-ice px-3 py-2 bg-white h-fit max-w-full">
-            {deals.map((d) => <option key={d.id}>{d.customer}</option>)}
+            {!customerNames.includes(customer) && <option>{customer}</option>}
+            {customerNames.map((n) => <option key={n}>{n}</option>)}
           </select>
         </div>
 
@@ -118,21 +135,32 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
 function ProposalTab({ readOnly }: { readOnly: boolean }) {
   const sections = ["แนะนำบริษัท", "ปัญหาและโจทย์ของลูกค้า (จาก Site Survey)", "โซลูชันที่เสนอ + สเปกอุปกรณ์", "Scope of Work", "แผนงานและ Timeline", "เงื่อนไขชำระเงิน + รับประกัน"];
   const [checked, setChecked] = useState<boolean[]>(sections.map(() => true));
-  const [dealId, setDealId] = useState(deals.filter((d) => d.stage !== "won")[0]?.id ?? "");
+  const dbDeals = useDbDeals();
+  const openDeals = dbDeals.filter((d) => d.stage !== "won" && d.stage !== "lost");
+  const [dealId, setDealId] = useState<number | null>(null);
+  const effectiveDealId = dealId ?? openDeals[0]?.id ?? null;
   const [state, setState] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [text, setText] = useState("");
 
   const run = async () => {
     setState("loading");
     try {
-      const deal = deals.find((d) => d.id === dealId);
+      const deal = dbDeals.find((d) => d.id === effectiveDealId);
+      let actLines: string[] = [];
+      if (deal && supabase) {
+        const { data } = await supabase.from("deal_activities").select("type,note,created_at")
+          .eq("deal_id", deal.id).order("created_at", { ascending: true });
+        actLines = ((data as { type: string; note: string; created_at: string }[]) ?? []).map(
+          (a) => `- ${new Date(a.created_at).toLocaleDateString("th-TH", { day: "numeric", month: "short" })} ${a.type}: ${a.note}`
+        );
+      }
       const j = await callCopilot({
         action: "ask",
         payload: [
           "ร่าง Proposal (เอกสารนำเสนอโครงการ) ภาษาไทยแบบพร้อมใช้เป็นร่างแรกจริง สำหรับ CONSERTECH CO., LTD. — ที่ปรึกษาและวิศวกรระบบ Intra-Logistic Automation (LiDAR-Guided AGV) ทีมวิศวกรไทย ติดตั้งจริง ดูแลหลังการขายเอง",
-          `ลูกค้า: ${deal?.customer} (${deal?.industry}) | โซลูชันที่สนใจ: ${deal?.solution}`,
+          `ลูกค้า: ${deal?.customer_name} (${deal?.industry ?? "-"}) | โซลูชันที่สนใจ: ${deal?.solution ?? "-"}`,
           "บันทึกกิจกรรม/Survey:",
-          ...(deal?.activities.map((a) => `- ${a.date} ${a.type}: ${a.note}`) ?? []),
+          ...actLines,
           `หัวข้อที่ต้องมี: ${sections.filter((_, i) => checked[i]).join(", ")}`,
         ].join("\n"),
       });
@@ -150,9 +178,9 @@ function ProposalTab({ readOnly }: { readOnly: boolean }) {
         <p className="text-[11px] font-bold text-sky">เลขที่เอกสาร</p>
         <p className="font-bold text-navy text-[18px]">PR-2569-008 <span className="text-[11px] font-semibold text-muted">(ร่าง)</span></p>
         <label className="block text-[12.5px] font-semibold text-navy mt-3 mb-1">ดีลอ้างอิง</label>
-        <select value={dealId} onChange={(e) => setDealId(e.target.value)}
+        <select value={effectiveDealId ?? ""} onChange={(e) => setDealId(Number(e.target.value))}
           className="w-full text-[13.5px] rounded-lg border border-ice px-3 py-2 bg-white" disabled={readOnly}>
-          {deals.filter((d) => d.stage !== "won").map((d) => <option key={d.id} value={d.id}>{d.id} — {d.customer}</option>)}
+          {openDeals.map((d) => <option key={d.id} value={d.id}>{dealCode(d.id)} — {d.customer_name}</option>)}
         </select>
         <p className="text-[12.5px] font-semibold text-navy mt-4 mb-1.5">หัวข้อที่ใส่ใน Proposal</p>
         {sections.map((s, i) => (
