@@ -168,8 +168,19 @@ function BizCardScan({ onAddLead, addLabel = "＋ เพิ่มเป็น Le
   );
 }
 
+// เทียบชื่อบริษัทแบบไม่สนวรรคตอน/ช่องว่าง/ตัวพิมพ์/คำลงท้าย — กัน "Co.,Ltd" กับ "Co.,Ltd." กลายเป็นคนละบริษัท
+export function normCompany(s: string): string {
+  return s.toLowerCase()
+    .replace(/บริษัท|ห้างหุ้นส่วนจำกัด|หจก\.?/g, " ")
+    .replace(/จำกัด\s*\(มหาชน\)|จำกัด/g, " ")
+    .replace(/public\s+company\s+limited|company\s+limited/g, " coltd ")
+    .replace(/co\.?\s*,?\s*ltd\.?/g, " coltd ")
+    .replace(/[^\p{L}\p{N}]+/gu, "")
+    .trim();
+}
+
 // นามบัตร 1 ใบ = ผู้ติดต่อ 1 คน — ถ้าบริษัทมีอยู่แล้วเพิ่มเป็นผู้ติดต่อ ถ้ายังไม่มีสร้างบริษัทใหม่ให้ด้วย
-async function upsertFromCard(f: Record<string, string | null>): Promise<{ customerId: number; createdCompany: boolean; companyName: string; contactName: string | null }> {
+async function upsertFromCard(f: Record<string, string | null>): Promise<{ customerId: number; createdCompany: boolean; companyName: string; contactName: string | null; contactUpdated?: boolean }> {
   if (!supabase) throw new Error("ยังไม่ได้เชื่อมต่อฐานข้อมูล");
   const companyName = (f.company_name ?? "").trim() || [f.first_name, f.last_name].filter(Boolean).join(" ").trim() || "ลูกค้าใหม่ (จากนามบัตร)";
   const contactName = [f.first_name, f.last_name].filter(Boolean).join(" ").trim() || null;
@@ -180,8 +191,11 @@ async function upsertFromCard(f: Record<string, string | null>): Promise<{ custo
     province: (f.province ?? "").trim() || null,
     postcode: (f.postcode ?? "").trim() || null,
   };
-  const { data: found } = await supabase.from("customers").select("id,name,contact_name,address,province").ilike("name", companyName).limit(1);
-  const existing = found?.[0] ?? null;
+  // เทียบชื่อแบบ normalize กับทุกบริษัทที่มี (กันซ้ำจากจุด/คอมมา/ช่องว่างต่างกัน)
+  const { data: allNames } = await supabase.from("customers").select("id,name,contact_name,address,province");
+  const target = normCompany(companyName);
+  const existing = ((allNames as { id: number; name: string; contact_name: string | null; address: string | null; province: string | null }[]) ?? [])
+    .find((c) => normCompany(c.name) === target) ?? null;
   let customerId: number;
   let createdCompany = false;
   if (existing) {
@@ -199,13 +213,22 @@ async function upsertFromCard(f: Record<string, string | null>): Promise<{ custo
     customerId = cust.id;
     createdCompany = true;
   }
+  let contactUpdated = false;
   if (contactName) {
-    await supabase.from("customer_contacts").insert({
-      customer_id: customerId, name: contactName, position: f.position ?? null,
-      phone: f.phone ?? null, email: f.email ?? null, line_id: f.line_id ?? null,
-    });
+    const { data: dup } = await supabase.from("customer_contacts").select("id")
+      .eq("customer_id", customerId).ilike("name", contactName).limit(1);
+    const row = {
+      position: f.position ?? null, phone: f.phone ?? null, email: f.email ?? null, line_id: f.line_id ?? null,
+    };
+    if (dup?.[0]) {
+      // คนเดิมสแกนซ้ำ → อัปเดตข้อมูลล่าสุดแทนการเพิ่มซ้ำ
+      await supabase.from("customer_contacts").update(row).eq("id", dup[0].id);
+      contactUpdated = true;
+    } else {
+      await supabase.from("customer_contacts").insert({ customer_id: customerId, name: contactName, ...row });
+    }
   }
-  return { customerId, createdCompany, companyName, contactName };
+  return { customerId, createdCompany, companyName, contactName, contactUpdated };
 }
 
 // ── ฟอร์มเพิ่มดีลใหม่ ──
@@ -718,11 +741,15 @@ function CustomersTab() {
     setSelectedId(r.customerId);
     return r.createdCompany
       ? `✅ เพิ่มบริษัท "${r.companyName}" + ผู้ติดต่อแล้ว`
+      : r.contactUpdated
+      ? `✅ บริษัทและผู้ติดต่อนี้มีอยู่แล้ว — อัปเดตข้อมูล "${r.contactName}" ให้เป็นล่าสุด`
       : `✅ บริษัทมีอยู่แล้ว — เพิ่ม "${r.contactName ?? "ผู้ติดต่อ"}" เป็นผู้ติดต่อของ ${r.companyName}`;
   };
 
   const addCustomer = async () => {
     if (!supabase || !String(edit.name ?? "").trim()) return;
+    const dupe = customers.find((c) => normCompany(c.name) === normCompany(String(edit.name)));
+    if (dupe) { setMsg(`⚠ บริษัทนี้มีอยู่แล้วในระบบ: "${dupe.name}" — เลือกจากรายชื่อแล้วเพิ่มผู้ติดต่อแทน`); return; }
     setSaving(true);
     const { data, error } = await supabase.from("customers").insert({
       name: String(edit.name).trim(), industry: edit.industry || null, address: edit.address || null,
@@ -730,7 +757,12 @@ function CustomersTab() {
       map_url: edit.map_url || null, note: edit.note || null,
     }).select("id").single();
     setSaving(false);
-    if (error) { setMsg("⚠ " + error.message); return; }
+    if (error) {
+      setMsg(error.message.includes("uq_customers_norm_name") || error.message.includes("duplicate")
+        ? "⚠ มีบริษัทชื่อนี้ (หรือชื่อเดียวกันที่สะกดต่างเล็กน้อย) อยู่แล้วในระบบ"
+        : "⚠ " + error.message);
+      return;
+    }
     setAdding(false);
     await load();
     setSelectedId(data.id);
