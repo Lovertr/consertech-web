@@ -178,6 +178,13 @@ function BizCardScan({ onAddLead, addLabel = "＋ เพิ่มเป็น Le
               ).join(" | ")}
             </span>
           )}
+          {Array.isArray((fields as Record<string, unknown>).affiliates) && ((fields as Record<string, unknown>).affiliates as CardAffiliate[]).length > 0 && (
+            <span className="w-full text-muted"><strong className="text-navy">🔗 บริษัทในเครือที่จะสร้างเป็นลูกค้าใหม่:</strong>{" "}
+              {((fields as Record<string, unknown>).affiliates as CardAffiliate[]).map((a) =>
+                `${a.name}${a.country && !/thailand|ไทย/i.test(a.country) ? ` (${a.country})` : ""}`
+              ).join(", ")}
+            </span>
+          )}
           {state === "added" ? (
             <span className="ml-auto text-[12px] font-bold text-[#2E9E5B]">{doneMsg}</span>
           ) : (
@@ -204,9 +211,10 @@ export function normCompany(s: string): string {
 }
 
 type CardBranch = { label?: string; address?: string; subdistrict?: string; district?: string; province?: string; postcode?: string };
+type CardAffiliate = { name?: string; address?: string; subdistrict?: string; district?: string; province?: string; postcode?: string; country?: string };
 
 // นามบัตร 1 ใบ = ผู้ติดต่อ 1 คน — ถ้าบริษัทมีอยู่แล้วเพิ่มเป็นผู้ติดต่อ ถ้ายังไม่มีสร้างบริษัทใหม่ให้ด้วย
-async function upsertFromCard(f: Record<string, string | null>, empId?: string): Promise<{ customerId: number; createdCompany: boolean; companyName: string; contactName: string | null; contactUpdated?: boolean }> {
+async function upsertFromCard(f: Record<string, string | null>, empId?: string): Promise<{ customerId: number; createdCompany: boolean; companyName: string; contactName: string | null; contactUpdated?: boolean; affiliatesCreated?: number }> {
   if (!supabase) throw new Error("ยังไม่ได้เชื่อมต่อฐานข้อมูล");
   const companyEn = (f.company_en ?? "").trim() || null; // ชื่อบริษัทภาษาอังกฤษ (ถ้านามบัตรมี 2 ภาษา)
   const companyName = (f.company_name ?? "").trim() || companyEn || [f.first_name, f.last_name].filter(Boolean).join(" ").trim() || "ลูกค้าใหม่ (จากนามบัตร)";
@@ -229,6 +237,8 @@ async function upsertFromCard(f: Record<string, string | null>, empId?: string):
   const noteExtra = (f.branch ?? "").trim() ? `สาขา: ${(f.branch ?? "").trim()}` : null;
   const cardBranches = (Array.isArray((f as Record<string, unknown>).branches) ? (f as Record<string, unknown>).branches as CardBranch[] : [])
     .filter((b) => b && ((b.address ?? "").trim() || (b.province ?? "").trim()));
+  const cardAffiliates = (Array.isArray((f as Record<string, unknown>).affiliates) ? (f as Record<string, unknown>).affiliates as CardAffiliate[] : [])
+    .filter((a) => a && (a.name ?? "").trim());
   // เช็คซ้ำ 3 ชั้น: Tax ID (แม่นสุด) > ชื่อ normalize (เทียบทั้งชื่อไทยและอังกฤษ) > ที่อยู่ normalize
   const { data: allNames } = await supabase.from("customers").select("id,name,name_en,contact_name,phone,address,province,tax_id,note");
   const rows = (allNames as { id: number; name: string; name_en: string | null; contact_name: string | null; phone: string | null; address: string | null; province: string | null; tax_id: string | null; note: string | null }[]) ?? [];
@@ -292,6 +302,30 @@ async function upsertFromCard(f: Record<string, string | null>, empId?: string):
       })));
     }
   }
+  // บริษัทในเครือจากนามบัตร → สร้างเป็นลูกค้าใหม่ เชื่อมโยงเข้าเครือของบริษัทหลัก (ไม่มีผู้ติดต่อจนกว่าจะได้ข้อมูลจริง)
+  let affiliatesCreated = 0;
+  for (const a of cardAffiliates) {
+    const an = (a.name ?? "").trim();
+    if (!an) continue;
+    const anNorm = normCompany(an);
+    if (anNorm === normCompany(companyName) || (companyEn && anNorm === normCompany(companyEn))) continue; // ข้ามถ้าคือบริษัทหลักเอง
+    const hit = rows.find((c) => normCompany(c.name) === anNorm || (c.name_en ? normCompany(c.name_en) === anNorm : false));
+    if (hit) {
+      // มีในระบบแล้ว — เชื่อมเข้าเครือให้ถ้ายังไม่ได้อยู่เครือไหน (ไม่ทับของเดิม)
+      if (hit.id !== customerId) await supabase.from("customers").update({ parent_customer_id: customerId }).eq("id", hit.id).is("parent_customer_id", null);
+      continue;
+    }
+    const country = (a.country ?? "").trim();
+    const isForeign = country && !/^(thailand|ไทย|ประเทศไทย)$/i.test(country);
+    const addr = [(a.address ?? "").trim(), isForeign ? country : ""].filter(Boolean).join(", ") || null;
+    const { error: aErr } = await supabase.from("customers").insert({
+      name: an, address: addr,
+      subdistrict: (a.subdistrict ?? "").trim() || null, district: (a.district ?? "").trim() || null,
+      province: (a.province ?? "").trim() || null, postcode: (a.postcode ?? "").trim() || null,
+      owner: empId || null, parent_customer_id: customerId,
+    });
+    if (!aErr) affiliatesCreated++;
+  }
   let contactUpdated = false;
   if (contactName) {
     // เทียบซ้ำทั้งชื่อไทยและชื่ออังกฤษ (ตัดช่องว่าง/ตัวพิมพ์)
@@ -317,7 +351,7 @@ async function upsertFromCard(f: Record<string, string | null>, empId?: string):
       await supabase.from("customer_contacts").insert({ customer_id: customerId, name: contactName, name_en: cEn, ...row, created_by: empId || null });
     }
   }
-  return { customerId, createdCompany, companyName, contactName, contactUpdated };
+  return { customerId, createdCompany, companyName, contactName, contactUpdated, affiliatesCreated };
 }
 
 // ── ฟอร์มเพิ่มดีลใหม่ ──
@@ -770,7 +804,7 @@ type DbCustomerFull = {
   id: number; name: string; name_en: string | null; industry: string | null; contact_name: string | null;
   phone: string | null; email: string | null; line_id: string | null; note: string | null;
   address: string | null; subdistrict: string | null; district: string | null; province: string | null; postcode: string | null;
-  tax_id: string | null; map_url: string | null; owner: string | null; interests: string[] | null; created_at: string;
+  tax_id: string | null; map_url: string | null; owner: string | null; interests: string[] | null; parent_customer_id: number | null; created_at: string;
 };
 type DbContact = { id: number; customer_id: number; name: string; name_en: string | null; position: string | null; phone: string | null; email: string | null; line_id: string | null; created_by: string | null };
 type DbQuoteLite = { id: number; doc_no: string; customer_name: string; total: number; status: string; created_at: string };
@@ -853,7 +887,7 @@ function CustomersTab() {
       name: selected.name, name_en: selected.name_en, industry: selected.industry, address: selected.address,
       subdistrict: selected.subdistrict, district: selected.district, province: selected.province, postcode: selected.postcode,
       map_url: selected.map_url, note: selected.note, owner: selected.owner, tax_id: selected.tax_id,
-      interests: selected.interests ?? [],
+      interests: selected.interests ?? [], parent_customer_id: selected.parent_customer_id,
     });
     setMsg("");
     setDealOpen(false); setDErr("");
@@ -874,19 +908,25 @@ function CustomersTab() {
     (!indFilter || c.industry === indFilter) &&
     (!intFilter || (c.interests ?? []).includes(intFilter)) &&
     (!stageFilter || custDeals.some((d) => (d.customer_id === c.id || d.customer_name === c.name) && d.stage === stageFilter)) &&
-    (!q.trim() || (c.name + " " + (c.name_en ?? "") + " " + (c.industry ?? "") + " " + (c.interests ?? []).join(" ") + " " + (c.province ?? "") + " " + (c.district ?? "") + " " + contacts.filter((x) => x.customer_id === c.id).map((x) => x.name + " " + (x.name_en ?? "")).join(" ")).toLowerCase().includes(q.trim().toLowerCase())));
+    (!q.trim() || (c.name + " " + (c.name_en ?? "") + " " + (c.industry ?? "") + " " + (c.interests ?? []).join(" ") + " " + (c.province ?? "") + " " + (c.district ?? "") + " " +
+      (customers.find((x) => x.id === c.parent_customer_id)?.name ?? "") + " " + customers.filter((x) => x.parent_customer_id === c.id).map((x) => x.name).join(" ") + " " +
+      contacts.filter((x) => x.customer_id === c.id).map((x) => x.name + " " + (x.name_en ?? "")).join(" ")).toLowerCase().includes(q.trim().toLowerCase())));
 
   const empName = (id: string | null) => emps.find((x) => x.id === id)?.name ?? id ?? "-";
+  // บริษัทในเครือ
+  const parentOf = (c: DbCustomerFull) => (c.parent_customer_id ? customers.find((x) => x.id === c.parent_customer_id) ?? null : null);
+  const childrenOf = (id: number) => customers.filter((c) => c.parent_customer_id === id);
 
   const scanCard = async (f: Record<string, string | null>) => {
     const r = await upsertFromCard(f, empId);
     await load();
     setSelectedId(r.customerId);
-    return r.createdCompany
+    const affMsg = r.affiliatesCreated ? ` + สร้างบริษัทในเครือ ${r.affiliatesCreated} บริษัท` : "";
+    return (r.createdCompany
       ? `✅ เพิ่มบริษัท "${r.companyName}" + ผู้ติดต่อแล้ว`
       : r.contactUpdated
       ? `✅ บริษัทและผู้ติดต่อนี้มีอยู่แล้ว — อัปเดตข้อมูล "${r.contactName}" ให้เป็นล่าสุด`
-      : `✅ บริษัทมีอยู่แล้ว — เพิ่ม "${r.contactName ?? "ผู้ติดต่อ"}" เป็นผู้ติดต่อของ ${r.companyName}`;
+      : `✅ บริษัทมีอยู่แล้ว — เพิ่ม "${r.contactName ?? "ผู้ติดต่อ"}" เป็นผู้ติดต่อของ ${r.companyName}`) + affMsg;
   };
 
   const addCustomer = async () => {
@@ -909,7 +949,7 @@ function CustomersTab() {
       name: String(edit.name).trim(), name_en: String(edit.name_en ?? "").trim() || null, industry: edit.industry || null, address: edit.address || null,
       subdistrict: edit.subdistrict || null, district: edit.district || null, province: edit.province || null, postcode: edit.postcode || null,
       map_url: edit.map_url || null, note: edit.note || null, owner: (edit.owner as string) || empId || null, tax_id: edit.tax_id || null,
-      interests: edit.interests ?? [],
+      interests: edit.interests ?? [], parent_customer_id: edit.parent_customer_id || null,
     }).select("id").single();
     setSaving(false);
     if (error) {
@@ -930,7 +970,7 @@ function CustomersTab() {
       name: String(edit.name).trim(), name_en: String(edit.name_en ?? "").trim() || null, industry: edit.industry || null, address: edit.address || null,
       subdistrict: edit.subdistrict || null, district: edit.district || null, province: edit.province || null, postcode: edit.postcode || null,
       map_url: edit.map_url || null, note: edit.note || null, owner: (edit.owner as string) || null, tax_id: edit.tax_id || null,
-      interests: edit.interests ?? [],
+      interests: edit.interests ?? [], parent_customer_id: edit.parent_customer_id || null,
     }).eq("id", selected.id);
     setSaving(false); setMsg("✅ บันทึกแล้ว");
     load();
@@ -1103,12 +1143,20 @@ function CustomersTab() {
           })}
         </div>
       </div>
-      <div className="sm:col-span-2">
+      <div>
         <label className="text-[11.5px] font-bold text-muted">👤 ผู้รับผิดชอบ (Sale เจ้าของลูกค้า)</label>
         <select value={String(edit.owner ?? "")} onChange={(e) => setEdit({ ...edit, owner: e.target.value })} disabled={readOnly}
           className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px] bg-white">
           <option value="">— ยังไม่ระบุ —</option>
           {emps.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className="text-[11.5px] font-bold text-muted">🔗 อยู่ในเครือของ (บริษัทแม่ — ถ้ามี)</label>
+        <select value={String(edit.parent_customer_id ?? "")} onChange={(e) => setEdit({ ...edit, parent_customer_id: e.target.value ? Number(e.target.value) : null })} disabled={readOnly}
+          className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px] bg-white">
+          <option value="">— ไม่อยู่ในเครือ —</option>
+          {customers.filter((c) => !isNew ? c.id !== selected?.id : true).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
       </div>
       <div className="sm:col-span-2">
@@ -1231,6 +1279,8 @@ function CustomersTab() {
                   className={`w-full text-left rounded-xl border p-3 transition text-[12.5px] ${selectedId === c.id && !adding ? "border-brand bg-ice/40" : "border-ice hover:border-brand"}`}>
                   <p className="font-bold text-navy leading-snug">{c.name}</p>
                   {c.name_en && <p className="text-[11px] text-sky leading-snug">{c.name_en}</p>}
+                  {parentOf(c) && <p className="text-[10.5px] font-semibold text-[#9A6A10] leading-snug mt-0.5">🔗 ในเครือ {parentOf(c)!.name}</p>}
+                  {childrenOf(c.id).length > 0 && <p className="text-[10.5px] font-semibold text-[#9A6A10] leading-snug mt-0.5">🏢 มีบริษัทในเครือ {childrenOf(c.id).length} บริษัท</p>}
                   <p className="text-[11px] text-muted/80 mt-0.5">
                     {[c.industry, c.province && `📍 ${c.province}`, c.owner && `👤 ${empName(c.owner)}`].filter(Boolean).join(" · ") || "-"} · ผู้ติดต่อ {n} · 🤝 {nd} ดีล
                   </p>
@@ -1271,6 +1321,22 @@ function CustomersTab() {
                       <div className="flex flex-wrap gap-1 mt-1.5">
                         {(selected.interests ?? []).map((s) => (
                           <span key={s} className="text-[10.5px] font-bold bg-amber/15 text-[#9A6A10] rounded-full px-2 py-0.5">💡 {s}</span>
+                        ))}
+                      </div>
+                    )}
+                    {parentOf(selected) && (
+                      <button onClick={() => setSelectedId(selected.parent_customer_id)} className="mt-1.5 block text-[11.5px] font-bold text-[#9A6A10] hover:underline">
+                        🔗 ในเครือของ: {parentOf(selected)!.name} →
+                      </button>
+                    )}
+                    {childrenOf(selected.id).length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                        <span className="text-[11px] font-bold text-muted">🏢 บริษัทในเครือ ({childrenOf(selected.id).length}):</span>
+                        {childrenOf(selected.id).map((ch) => (
+                          <button key={ch.id} onClick={() => setSelectedId(ch.id)}
+                            className="text-[10.5px] font-bold bg-ice text-navy rounded-full px-2 py-0.5 hover:bg-sky/20" title="เปิดดูบริษัทนี้">
+                            {ch.name}
+                          </button>
                         ))}
                       </div>
                     )}
