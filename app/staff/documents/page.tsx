@@ -50,17 +50,17 @@ const CO = {
 };
 
 type QCust = {
-  id: number; name: string; contact_name: string | null; tax_id: string | null;
+  id: number; name: string; name_en: string | null; contact_name: string | null; tax_id: string | null;
   address: string | null; subdistrict: string | null; district: string | null; province: string | null; postcode: string | null;
 };
-type QContact = { id: number; customer_id: number; name: string };
+type QContact = { id: number; customer_id: number; name: string; name_en: string | null };
 function useDbCustomers() {
   const [list, setList] = useState<QCust[]>([]);
   const [contacts, setContacts] = useState<QContact[]>([]);
   useEffect(() => {
-    supabase?.from("customers").select("id,name,contact_name,tax_id,address,subdistrict,district,province,postcode").order("name")
+    supabase?.from("customers").select("id,name,name_en,contact_name,tax_id,address,subdistrict,district,province,postcode").order("name")
       .then(({ data }) => setList((data as QCust[]) ?? []));
-    supabase?.from("customer_contacts").select("id,customer_id,name")
+    supabase?.from("customer_contacts").select("id,customer_id,name,name_en")
       .then(({ data }) => setContacts((data as QContact[]) ?? []));
   }, []);
   return { list, contacts };
@@ -423,7 +423,7 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
             <input list="qt-customers" value={customer} disabled={readOnly} placeholder="พิมพ์ชื่อบริษัท..."
               onChange={(e) => {
                 const v = e.target.value; setCustomer(v);
-                const hit = dbCustomers.find((c) => c.name === v);
+                const hit = dbCustomers.find((c) => c.name === v || c.name_en === v);
                 if (hit) {
                   // เติมข้อมูลจากระบบลูกค้าให้อัตโนมัติ
                   if (hit.contact_name) setContactName(hit.contact_name);
@@ -433,17 +433,25 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
                 }
               }}
               className="mt-1 w-full text-[13px] rounded-lg border border-ice px-3 py-2" />
-            <datalist id="qt-customers">{dbCustomers.map((c) => <option key={c.id} value={c.name} />)}</datalist>
+            <datalist id="qt-customers">
+              {dbCustomers.flatMap((c) => [
+                <option key={c.id} value={c.name} label={c.name_en ?? undefined} />,
+                ...(c.name_en ? [<option key={`${c.id}-en`} value={c.name_en} label={c.name} />] : []),
+              ])}
+            </datalist>
           </div>
           <div>
             <label className="text-[11.5px] font-bold text-muted">ผู้ติดต่อ (ATTN — พิมพ์ค้นหาได้)</label>
             <input list="qt-contacts" value={contactName} onChange={(e) => setContactName(e.target.value)} disabled={readOnly} placeholder="ชื่อผู้ติดต่อฝั่งลูกค้า"
               className="mt-1 w-full text-[13px] rounded-lg border border-ice px-3 py-2" />
             <datalist id="qt-contacts">
-              {(dbCustomers.find((c) => c.name === customer)
-                ? dbContacts.filter((x) => x.customer_id === dbCustomers.find((c) => c.name === customer)!.id)
+              {(dbCustomers.find((c) => c.name === customer || c.name_en === customer)
+                ? dbContacts.filter((x) => x.customer_id === dbCustomers.find((c) => c.name === customer || c.name_en === customer)!.id)
                 : dbContacts
-              ).map((x) => <option key={x.id} value={x.name} />)}
+              ).flatMap((x) => [
+                <option key={x.id} value={x.name} label={x.name_en ?? undefined} />,
+                ...(x.name_en ? [<option key={`${x.id}-en`} value={x.name_en} label={x.name} />] : []),
+              ])}
             </datalist>
           </div>
           <div>

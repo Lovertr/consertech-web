@@ -147,9 +147,9 @@ function BizCardScan({ onAddLead, addLabel = "＋ เพิ่มเป็น Le
       </div>
       {(state === "done" || state === "adding" || state === "added") && (
         <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-[12.5px] bg-white rounded-lg border border-ice p-3">
-          <span><strong className="text-navy">ชื่อ:</strong> {[fields.first_name, fields.last_name].filter(Boolean).join(" ") || "-"}</span>
+          <span><strong className="text-navy">ชื่อ:</strong> {[fields.first_name, fields.last_name].filter(Boolean).join(" ") || fields.name_en || "-"}{fields.name_en && [fields.first_name, fields.last_name].filter(Boolean).length > 0 ? ` (${fields.name_en})` : ""}</span>
           <span><strong className="text-navy">ตำแหน่ง:</strong> {fields.position ?? "-"}</span>
-          <span><strong className="text-navy">บริษัท:</strong> {fields.company_name ?? "-"}</span>
+          <span><strong className="text-navy">บริษัท:</strong> {fields.company_name ?? fields.company_en ?? "-"}{fields.company_en && fields.company_name ? ` (${fields.company_en})` : ""}</span>
           <span><strong className="text-navy">โทร:</strong> {fields.phone ?? "-"}</span>
           <span><strong className="text-navy">อีเมล:</strong> {fields.email ?? "-"}</span>
           {fields.line_id && <span><strong className="text-navy">LINE:</strong> {fields.line_id}</span>}
@@ -183,8 +183,10 @@ export function normCompany(s: string): string {
 // นามบัตร 1 ใบ = ผู้ติดต่อ 1 คน — ถ้าบริษัทมีอยู่แล้วเพิ่มเป็นผู้ติดต่อ ถ้ายังไม่มีสร้างบริษัทใหม่ให้ด้วย
 async function upsertFromCard(f: Record<string, string | null>, empId?: string): Promise<{ customerId: number; createdCompany: boolean; companyName: string; contactName: string | null; contactUpdated?: boolean }> {
   if (!supabase) throw new Error("ยังไม่ได้เชื่อมต่อฐานข้อมูล");
-  const companyName = (f.company_name ?? "").trim() || [f.first_name, f.last_name].filter(Boolean).join(" ").trim() || "ลูกค้าใหม่ (จากนามบัตร)";
-  const contactName = [f.first_name, f.last_name].filter(Boolean).join(" ").trim() || null;
+  const companyEn = (f.company_en ?? "").trim() || null; // ชื่อบริษัทภาษาอังกฤษ (ถ้านามบัตรมี 2 ภาษา)
+  const companyName = (f.company_name ?? "").trim() || companyEn || [f.first_name, f.last_name].filter(Boolean).join(" ").trim() || "ลูกค้าใหม่ (จากนามบัตร)";
+  const contactEn = (f.name_en ?? "").trim() || null; // ชื่อผู้ติดต่อภาษาอังกฤษ
+  const contactName = [f.first_name, f.last_name].filter(Boolean).join(" ").trim() || contactEn;
   const address = (f.address ?? "").trim() || null;
   const parts = {
     subdistrict: (f.subdistrict ?? "").trim() || null,
@@ -193,14 +195,16 @@ async function upsertFromCard(f: Record<string, string | null>, empId?: string):
     postcode: (f.postcode ?? "").trim() || null,
   };
   const cardTaxId = (f.tax_id ?? "").replace(/[^0-9]/g, "") || null; // เก็บเฉพาะตัวเลข 13 หลัก
-  // เช็คซ้ำ 3 ชั้น: Tax ID (แม่นสุด) > ชื่อ normalize > ที่อยู่ normalize
-  const { data: allNames } = await supabase.from("customers").select("id,name,contact_name,address,province,tax_id");
-  const rows = (allNames as { id: number; name: string; contact_name: string | null; address: string | null; province: string | null; tax_id: string | null }[]) ?? [];
-  const target = normCompany(companyName);
+  // เช็คซ้ำ 3 ชั้น: Tax ID (แม่นสุด) > ชื่อ normalize (เทียบทั้งชื่อไทยและอังกฤษ) > ที่อยู่ normalize
+  const { data: allNames } = await supabase.from("customers").select("id,name,name_en,contact_name,address,province,tax_id");
+  const rows = (allNames as { id: number; name: string; name_en: string | null; contact_name: string | null; address: string | null; province: string | null; tax_id: string | null }[]) ?? [];
+  const targets = [normCompany(companyName), companyEn ? normCompany(companyEn) : ""].filter(Boolean);
+  const nameHit = (c: { name: string; name_en: string | null }) =>
+    targets.includes(normCompany(c.name)) || (c.name_en ? targets.includes(normCompany(c.name_en)) : false);
   const normAddr = (s: string | null) => (s ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
   const existing =
     (cardTaxId ? rows.find((c) => c.tax_id && c.tax_id.replace(/[^0-9]/g, "") === cardTaxId) : undefined) ??
-    rows.find((c) => normCompany(c.name) === target) ??
+    rows.find(nameHit) ??
     (address && normAddr(address).length > 12 ? rows.find((c) => c.address && normAddr(c.address) === normAddr(address)) : undefined) ??
     null;
   let customerId: number;
@@ -212,10 +216,18 @@ async function upsertFromCard(f: Record<string, string | null>, empId?: string):
     if (!existing.address && address) patch.address = address; // เติมที่อยู่จากนามบัตรให้ถ้ายังไม่มี
     if (!existing.province && parts.province) Object.assign(patch, parts);
     if (!existing.tax_id && cardTaxId) patch.tax_id = cardTaxId; // เติม Tax ID จากนามบัตรให้ถ้ายังไม่มี
+    // เติมชื่ออีกภาษาให้ถ้ายังไม่มี: ถ้าในระบบเก็บชื่ออังกฤษไว้เป็นชื่อหลัก แล้วนามบัตรมีชื่อไทย → ยกชื่อไทยเป็นชื่อหลัก เก็บอังกฤษไว้ใน name_en
+    if (!existing.name_en) {
+      const exNorm = normCompany(existing.name);
+      const thName = (f.company_name ?? "").trim() || null;
+      if (companyEn && normCompany(companyEn) !== exNorm) patch.name_en = companyEn;
+      else if (thName && companyEn && normCompany(companyEn) === exNorm && /[ก-๙]/.test(thName)) { patch.name = thName; patch.name_en = existing.name; }
+    }
     if (Object.keys(patch).length) await supabase.from("customers").update(patch).eq("id", customerId);
   } else {
     const { data: cust, error } = await supabase.from("customers").insert({
-      name: companyName, contact_name: contactName, phone: f.phone ?? null, email: f.email ?? null, line_id: f.line_id ?? null, address, ...parts,
+      name: companyName, name_en: companyEn && normCompany(companyEn) !== normCompany(companyName) ? companyEn : null,
+      contact_name: contactName, phone: f.phone ?? null, email: f.email ?? null, line_id: f.line_id ?? null, address, ...parts,
       tax_id: cardTaxId, owner: empId || null,
     }).select("id").single();
     if (error) throw error;
@@ -224,17 +236,27 @@ async function upsertFromCard(f: Record<string, string | null>, empId?: string):
   }
   let contactUpdated = false;
   if (contactName) {
-    const { data: dup } = await supabase.from("customer_contacts").select("id")
-      .eq("customer_id", customerId).ilike("name", contactName).limit(1);
+    // เทียบซ้ำทั้งชื่อไทยและชื่ออังกฤษ (ตัดช่องว่าง/ตัวพิมพ์)
+    const normP = (s: string | null) => (s ?? "").toLowerCase().replace(/\s+/g, "");
+    const cTargets = [normP(contactName), normP(contactEn)].filter(Boolean);
+    const { data: exContacts } = await supabase.from("customer_contacts").select("id,name,name_en").eq("customer_id", customerId);
+    const dup = ((exContacts as { id: number; name: string; name_en: string | null }[]) ?? [])
+      .find((c) => cTargets.includes(normP(c.name)) || (c.name_en ? cTargets.includes(normP(c.name_en)) : false));
     const row = {
       position: f.position ?? null, phone: f.phone ?? null, email: f.email ?? null, line_id: f.line_id ?? null,
     };
-    if (dup?.[0]) {
-      // คนเดิมสแกนซ้ำ → อัปเดตข้อมูลล่าสุดแทนการเพิ่มซ้ำ
-      await supabase.from("customer_contacts").update(row).eq("id", dup[0].id);
+    const cEn = contactEn && normP(contactEn) !== normP(contactName) ? contactEn : null;
+    if (dup) {
+      // คนเดิมสแกนซ้ำ → อัปเดตข้อมูลล่าสุดแทนการเพิ่มซ้ำ (เติมชื่ออีกภาษาให้ถ้ายังไม่มี)
+      const upd: Record<string, unknown> = { ...row };
+      if (!dup.name_en) {
+        if (cEn && normP(cEn) !== normP(dup.name)) upd.name_en = cEn;
+        else if (/[ก-๙]/.test(contactName) && !/[ก-๙]/.test(dup.name) && normP(contactName) !== normP(dup.name)) { upd.name = contactName; upd.name_en = dup.name; }
+      }
+      await supabase.from("customer_contacts").update(upd).eq("id", dup.id);
       contactUpdated = true;
     } else {
-      await supabase.from("customer_contacts").insert({ customer_id: customerId, name: contactName, ...row, created_by: empId || null });
+      await supabase.from("customer_contacts").insert({ customer_id: customerId, name: contactName, name_en: cEn, ...row, created_by: empId || null });
     }
   }
   return { customerId, createdCompany, companyName, contactName, contactUpdated };
@@ -685,12 +707,12 @@ function CrmBody() {
 
 // ── แท็บจัดการลูกค้า — บริษัท + ผู้ติดต่อหลายคน + แผนที่ + ดีลที่เกี่ยวข้อง ──
 type DbCustomerFull = {
-  id: number; name: string; industry: string | null; contact_name: string | null;
+  id: number; name: string; name_en: string | null; industry: string | null; contact_name: string | null;
   phone: string | null; email: string | null; line_id: string | null; note: string | null;
   address: string | null; subdistrict: string | null; district: string | null; province: string | null; postcode: string | null;
   tax_id: string | null; map_url: string | null; owner: string | null; created_at: string;
 };
-type DbContact = { id: number; customer_id: number; name: string; position: string | null; phone: string | null; email: string | null; line_id: string | null; created_by: string | null };
+type DbContact = { id: number; customer_id: number; name: string; name_en: string | null; position: string | null; phone: string | null; email: string | null; line_id: string | null; created_by: string | null };
 
 function CustomersTab() {
   const { access, empId } = useDept();
@@ -708,12 +730,12 @@ function CustomersTab() {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
   // ฟอร์มผู้ติดต่อ (เพิ่มใหม่ / แก้ไข)
-  const [cName, setCName] = useState(""); const [cPos, setCPos] = useState("");
+  const [cName, setCName] = useState(""); const [cNameEn, setCNameEn] = useState(""); const [cPos, setCPos] = useState("");
   const [cPhone, setCPhone] = useState(""); const [cEmail, setCEmail] = useState(""); const [cLine, setCLine] = useState("");
   const [editContactId, setEditContactId] = useState<number | null>(null);
   const [merging, setMerging] = useState(false);
   const [mergeTarget, setMergeTarget] = useState("");
-  const [ec, setEc] = useState<{ name: string; position: string; phone: string; email: string; line_id: string }>({ name: "", position: "", phone: "", email: "", line_id: "" });
+  const [ec, setEc] = useState<{ name: string; name_en: string; position: string; phone: string; email: string; line_id: string }>({ name: "", name_en: "", position: "", phone: "", email: "", line_id: "" });
 
   const load = useCallback(async () => {
     if (!supabase) return;
@@ -735,7 +757,7 @@ function CustomersTab() {
   const selected = customers.find((c) => c.id === selectedId) ?? null;
   useEffect(() => {
     if (selected) setEdit({
-      name: selected.name, industry: selected.industry, address: selected.address,
+      name: selected.name, name_en: selected.name_en, industry: selected.industry, address: selected.address,
       subdistrict: selected.subdistrict, district: selected.district, province: selected.province, postcode: selected.postcode,
       map_url: selected.map_url, note: selected.note, owner: selected.owner, tax_id: selected.tax_id,
     });
@@ -747,7 +769,7 @@ function CustomersTab() {
   const selDeals = selected ? custDeals.filter((d) => d.customer_id === selected.id || d.customer_name === selected.name) : [];
   const list = customers.filter((c) =>
     (!provFilter || c.province === provFilter) &&
-    (!q.trim() || (c.name + " " + (c.industry ?? "") + " " + (c.province ?? "") + " " + (c.district ?? "") + " " + contacts.filter((x) => x.customer_id === c.id).map((x) => x.name).join(" ")).toLowerCase().includes(q.trim().toLowerCase())));
+    (!q.trim() || (c.name + " " + (c.name_en ?? "") + " " + (c.industry ?? "") + " " + (c.province ?? "") + " " + (c.district ?? "") + " " + contacts.filter((x) => x.customer_id === c.id).map((x) => x.name + " " + (x.name_en ?? "")).join(" ")).toLowerCase().includes(q.trim().toLowerCase())));
 
   const empName = (id: string | null) => emps.find((x) => x.id === id)?.name ?? id ?? "-";
 
@@ -764,7 +786,8 @@ function CustomersTab() {
 
   const addCustomer = async () => {
     if (!supabase || !String(edit.name ?? "").trim()) return;
-    const dupe = customers.find((c) => normCompany(c.name) === normCompany(String(edit.name)));
+    const newNorms = [normCompany(String(edit.name)), edit.name_en ? normCompany(String(edit.name_en)) : ""].filter(Boolean);
+    const dupe = customers.find((c) => newNorms.includes(normCompany(c.name)) || (c.name_en ? newNorms.includes(normCompany(c.name_en)) : false));
     if (dupe) { setMsg(`⚠ บริษัทนี้มีอยู่แล้วในระบบ: "${dupe.name}" — เลือกจากรายชื่อแล้วเพิ่มผู้ติดต่อแทน`); return; }
     const newTax = String(edit.tax_id ?? "").replace(/[^0-9]/g, "");
     if (newTax) {
@@ -778,7 +801,7 @@ function CustomersTab() {
     }
     setSaving(true);
     const { data, error } = await supabase.from("customers").insert({
-      name: String(edit.name).trim(), industry: edit.industry || null, address: edit.address || null,
+      name: String(edit.name).trim(), name_en: String(edit.name_en ?? "").trim() || null, industry: edit.industry || null, address: edit.address || null,
       subdistrict: edit.subdistrict || null, district: edit.district || null, province: edit.province || null, postcode: edit.postcode || null,
       map_url: edit.map_url || null, note: edit.note || null, owner: (edit.owner as string) || empId || null, tax_id: edit.tax_id || null,
     }).select("id").single();
@@ -798,7 +821,7 @@ function CustomersTab() {
     if (!supabase || !selected || !String(edit.name ?? "").trim()) return;
     setSaving(true);
     await supabase.from("customers").update({
-      name: String(edit.name).trim(), industry: edit.industry || null, address: edit.address || null,
+      name: String(edit.name).trim(), name_en: String(edit.name_en ?? "").trim() || null, industry: edit.industry || null, address: edit.address || null,
       subdistrict: edit.subdistrict || null, district: edit.district || null, province: edit.province || null, postcode: edit.postcode || null,
       map_url: edit.map_url || null, note: edit.note || null, owner: (edit.owner as string) || null, tax_id: edit.tax_id || null,
     }).eq("id", selected.id);
@@ -831,14 +854,14 @@ function CustomersTab() {
   const addContact = async () => {
     if (!supabase || !selected || !cName.trim()) return;
     await supabase.from("customer_contacts").insert({
-      customer_id: selected.id, name: cName.trim(), position: cPos.trim() || null,
+      customer_id: selected.id, name: cName.trim(), name_en: cNameEn.trim() || null, position: cPos.trim() || null,
       phone: cPhone.trim() || null, email: cEmail.trim() || null, line_id: cLine.trim() || null,
       created_by: empId || null,
     });
     if (!selected.contact_name) {
       await supabase.from("customers").update({ contact_name: cName.trim(), phone: cPhone.trim() || null, email: cEmail.trim() || null }).eq("id", selected.id);
     }
-    setCName(""); setCPos(""); setCPhone(""); setCEmail(""); setCLine("");
+    setCName(""); setCNameEn(""); setCPos(""); setCPhone(""); setCEmail(""); setCLine("");
     load();
   };
 
@@ -851,13 +874,13 @@ function CustomersTab() {
 
   const startEditContact = (c: DbContact) => {
     setEditContactId(c.id);
-    setEc({ name: c.name, position: c.position ?? "", phone: c.phone ?? "", email: c.email ?? "", line_id: c.line_id ?? "" });
+    setEc({ name: c.name, name_en: c.name_en ?? "", position: c.position ?? "", phone: c.phone ?? "", email: c.email ?? "", line_id: c.line_id ?? "" });
   };
 
   const saveContact = async () => {
     if (!supabase || editContactId === null || !ec.name.trim()) return;
     await supabase.from("customer_contacts").update({
-      name: ec.name.trim(), position: ec.position.trim() || null, phone: ec.phone.trim() || null,
+      name: ec.name.trim(), name_en: ec.name_en.trim() || null, position: ec.position.trim() || null, phone: ec.phone.trim() || null,
       email: ec.email.trim() || null, line_id: ec.line_id.trim() || null,
     }).eq("id", editContactId);
     setEditContactId(null);
@@ -867,11 +890,16 @@ function CustomersTab() {
   const editForm = (isNew: boolean) => (
     <div className="grid gap-2.5 sm:grid-cols-2">
       <div>
-        <label className="text-[11.5px] font-bold text-muted">ชื่อบริษัท *</label>
+        <label className="text-[11.5px] font-bold text-muted">ชื่อบริษัท (หลัก/ไทย) *</label>
         <input value={String(edit.name ?? "")} onChange={(e) => setEdit({ ...edit, name: e.target.value })} disabled={readOnly}
           className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
       </div>
       <div>
+        <label className="text-[11.5px] font-bold text-muted">ชื่อบริษัท (อังกฤษ)</label>
+        <input value={String(edit.name_en ?? "")} onChange={(e) => setEdit({ ...edit, name_en: e.target.value })} disabled={readOnly}
+          placeholder="เช่น ... Co., Ltd." className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
+      </div>
+      <div className="sm:col-span-2">
         <label className="text-[11.5px] font-bold text-muted">อุตสาหกรรม</label>
         <input value={String(edit.industry ?? "")} onChange={(e) => setEdit({ ...edit, industry: e.target.value })} disabled={readOnly}
           placeholder="เช่น ยานยนต์ / โลจิสติกส์" className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
@@ -975,6 +1003,7 @@ function CustomersTab() {
                 <button key={c.id} onClick={() => { setSelectedId(c.id); setAdding(false); }}
                   className={`w-full text-left rounded-xl border p-3 transition text-[12.5px] ${selectedId === c.id && !adding ? "border-brand bg-ice/40" : "border-ice hover:border-brand"}`}>
                   <p className="font-bold text-navy leading-snug">{c.name}</p>
+                  {c.name_en && <p className="text-[11px] text-sky leading-snug">{c.name_en}</p>}
                   <p className="text-[11px] text-muted/80 mt-0.5">
                     {[c.industry, c.province && `📍 ${c.province}`, c.owner && `👤 ${empName(c.owner)}`].filter(Boolean).join(" · ") || "-"} · ผู้ติดต่อ {n} · 🤝 {nd} ดีล
                   </p>
@@ -998,6 +1027,7 @@ function CustomersTab() {
                 <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
                   <div>
                     <p className="font-bold text-navy text-[16px]">{selected.name}</p>
+                    {selected.name_en && <p className="text-[12.5px] text-sky font-semibold">{selected.name_en}</p>}
                     <p className="text-[11.5px] text-muted mt-0.5">👤 ผู้รับผิดชอบ: <strong className="text-brand">{empName(selected.owner)}</strong></p>
                   </div>
                   <div className="flex gap-2">
@@ -1022,7 +1052,7 @@ function CustomersTab() {
                         placeholder="พิมพ์ค้นหาบริษัทปลายทาง (ตัวที่ถูกต้อง)..."
                         className="flex-1 min-w-[220px] rounded-lg border border-ice px-3 py-2 text-[12.5px]" />
                       <datalist id="merge-targets">
-                        {customers.filter((c) => c.id !== selected.id).map((c) => <option key={c.id} value={c.name} />)}
+                        {customers.filter((c) => c.id !== selected.id).map((c) => <option key={c.id} value={c.name} label={c.name_en ?? undefined} />)}
                       </datalist>
                       <button onClick={doMerge} disabled={!customers.some((c) => c.name === mergeTarget && c.id !== selected.id)}
                         className="btn btn-primary text-[12.5px] py-2 px-3.5 disabled:opacity-50">รวมเลย</button>
@@ -1042,9 +1072,10 @@ function CustomersTab() {
                       {editContactId === c.id ? (
                         <div className="space-y-1.5">
                           <div className="flex gap-1.5">
-                            <input value={ec.name} onChange={(e) => setEc({ ...ec, name: e.target.value })} placeholder="ชื่อ *" className="flex-1 min-w-0 rounded border border-ice px-2 py-1 text-[12px]" />
-                            <input value={ec.position} onChange={(e) => setEc({ ...ec, position: e.target.value })} placeholder="ตำแหน่ง" className="flex-1 min-w-0 rounded border border-ice px-2 py-1 text-[12px]" />
+                            <input value={ec.name} onChange={(e) => setEc({ ...ec, name: e.target.value })} placeholder="ชื่อ (ไทย) *" className="flex-1 min-w-0 rounded border border-ice px-2 py-1 text-[12px]" />
+                            <input value={ec.name_en} onChange={(e) => setEc({ ...ec, name_en: e.target.value })} placeholder="ชื่อ (อังกฤษ)" className="flex-1 min-w-0 rounded border border-ice px-2 py-1 text-[12px]" />
                           </div>
+                          <input value={ec.position} onChange={(e) => setEc({ ...ec, position: e.target.value })} placeholder="ตำแหน่ง" className="w-full rounded border border-ice px-2 py-1 text-[12px]" />
                           <div className="flex gap-1.5">
                             <input value={ec.phone} onChange={(e) => setEc({ ...ec, phone: e.target.value })} placeholder="โทร" className="flex-1 min-w-0 rounded border border-ice px-2 py-1 text-[12px]" />
                             <input value={ec.line_id} onChange={(e) => setEc({ ...ec, line_id: e.target.value })} placeholder="LINE" className="w-24 rounded border border-ice px-2 py-1 text-[12px]" />
@@ -1058,7 +1089,7 @@ function CustomersTab() {
                       ) : (
                         <>
                           <div className="flex items-start justify-between gap-2">
-                            <p className="font-bold text-navy">{c.name}</p>
+                            <p className="font-bold text-navy">{c.name}{c.name_en && <span className="font-semibold text-sky"> ({c.name_en})</span>}</p>
                             {!readOnly && (
                               <span className="flex gap-1 shrink-0">
                                 <button onClick={() => startEditContact(c)} title="แก้ไขผู้ติดต่อ"
@@ -1081,7 +1112,8 @@ function CustomersTab() {
                 </div>
                 {!readOnly && (
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <input value={cName} onChange={(e) => setCName(e.target.value)} placeholder="ชื่อผู้ติดต่อ *" className="rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px] w-36" />
+                    <input value={cName} onChange={(e) => setCName(e.target.value)} placeholder="ชื่อผู้ติดต่อ (ไทย) *" className="rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px] w-40" />
+                    <input value={cNameEn} onChange={(e) => setCNameEn(e.target.value)} placeholder="ชื่อ (อังกฤษ)" className="rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px] w-36" />
                     <input value={cPos} onChange={(e) => setCPos(e.target.value)} placeholder="ตำแหน่ง" className="rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px] w-32" />
                     <input value={cPhone} onChange={(e) => setCPhone(e.target.value)} placeholder="โทร" className="rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px] w-32" />
                     <input value={cEmail} onChange={(e) => setCEmail(e.target.value)} placeholder="อีเมล" className="rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px] w-44" />
