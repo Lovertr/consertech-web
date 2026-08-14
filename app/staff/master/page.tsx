@@ -37,11 +37,11 @@ function Thumb({ url, size = 44 }: { url: string | null; size?: number }) {
 }
 
 // ── ฟอร์มเพิ่ม/แก้ไขสินค้า (อัปโหลดรูปได้จริง) ──
-function ProductForm({ product, onDone, onCancel }: { product: DbProduct | null; onDone: () => void; onCancel: () => void }) {
+function ProductForm({ product, catOptions, onDone, onCancel }: { product: DbProduct | null; catOptions?: string[]; onDone: () => void; onCancel: () => void }) {
   const [code, setCode] = useState(product?.code ?? "");
   const [name, setName] = useState(product?.name ?? "");
   const [desc, setDesc] = useState(product?.description ?? "");
-  const [category, setCategory] = useState(product?.category ?? "เซนเซอร์");
+  const [category, setCategory] = useState(product?.category ?? "อื่นๆ");
   const [unit, setUnit] = useState(product?.unit ?? "ตัว");
   const [price, setPrice] = useState(product?.price ?? 0);
   const [minStock, setMinStock] = useState(product?.min_stock ?? 0);
@@ -125,7 +125,7 @@ function ProductForm({ product, onDone, onCancel }: { product: DbProduct | null;
           <div>
             <label className="text-[11.5px] font-bold text-muted">หมวดหมู่</label>
             <select value={category} onChange={(e) => setCategory(e.target.value)} className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px] bg-white">
-              {[...new Set([...CATEGORIES, category])].filter(Boolean).map((c) => <option key={c} value={c}>{c}</option>)}
+              {[...new Set([...(catOptions ?? CATEGORIES), category])].filter(Boolean).map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
           <div className="sm:col-span-2">
@@ -189,8 +189,8 @@ function ProductsTab({ products, canSeePrice, readOnly, reload }: {
   const [editing, setEditing] = useState<DbProduct | null>(null);
   const [adding, setAdding] = useState(false);
 
-  // หมวด/ซีรีส์แบบไดนามิก — รวมของเดิม + จากแคตตาล็อกที่นำเข้า
-  const allCats = [...new Set([...CATEGORIES, ...products.map((p) => p.category)])].filter(Boolean);
+  // หมวดแบบไดนามิก — เฉพาะหมวดที่มีสินค้าจริง (คง "อื่นๆ" ไว้ท้ายเสมอ)
+  const allCats = [...[...new Set(products.map((p) => p.category))].filter((c) => c && c !== "อื่นๆ").sort((a, b) => a.localeCompare(b, "th")), "อื่นๆ"];
   const allSeries = [...new Set(products.map((p) => p.series).filter(Boolean))] as string[];
 
   // ค้นหาได้ทุกอย่าง: Part No / ชื่อ / รุ่น / ซีรีส์ / ยี่ห้อ / หมวด / สเปกเต็ม
@@ -222,7 +222,7 @@ function ProductsTab({ products, canSeePrice, readOnly, reload }: {
   return (
     <>
       {(adding || editing) && (
-        <ProductForm product={editing} onDone={() => { setAdding(false); setEditing(null); reload(); }}
+        <ProductForm product={editing} catOptions={allCats} onDone={() => { setAdding(false); setEditing(null); reload(); }}
           onCancel={() => { setAdding(false); setEditing(null); }} />
       )}
       <div className="card-white overflow-hidden">
