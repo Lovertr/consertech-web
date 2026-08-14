@@ -170,7 +170,13 @@ function BizCardScan({ onAddLead, addLabel = "＋ เพิ่มเป็น Le
           {fields.line_id && <span><strong className="text-navy">LINE:</strong> {fields.line_id}</span>}
           {fields.tax_id && <span><strong className="text-navy">Tax ID:</strong> {fields.tax_id}</span>}
           {fields.address && <span className="w-full"><strong className="text-navy">ที่อยู่:</strong> {fields.address}{[fields.subdistrict, fields.district, fields.province, fields.postcode].filter(Boolean).length > 0 && ` · ${[fields.subdistrict, fields.district, fields.province, fields.postcode].filter(Boolean).join(" ")}`}</span>}
-          {fields.other_addresses && <span className="w-full text-muted"><strong className="text-navy">ที่อยู่อื่นๆ:</strong> {fields.other_addresses}</span>}
+          {Array.isArray((fields as Record<string, unknown>).branches) && ((fields as Record<string, unknown>).branches as CardBranch[]).length > 0 && (
+            <span className="w-full text-muted"><strong className="text-navy">🏢 สาขา/ที่อยู่อื่นที่จะบันทึกเพิ่ม:</strong>{" "}
+              {((fields as Record<string, unknown>).branches as CardBranch[]).map((b) =>
+                `${b.label ? b.label + ": " : ""}${[b.address, b.subdistrict, b.district, b.province, b.postcode].filter(Boolean).join(" ")}`
+              ).join(" | ")}
+            </span>
+          )}
           {state === "added" ? (
             <span className="ml-auto text-[12px] font-bold text-[#2E9E5B]">{doneMsg}</span>
           ) : (
@@ -196,6 +202,8 @@ export function normCompany(s: string): string {
     .trim();
 }
 
+type CardBranch = { label?: string; address?: string; subdistrict?: string; district?: string; province?: string; postcode?: string };
+
 // นามบัตร 1 ใบ = ผู้ติดต่อ 1 คน — ถ้าบริษัทมีอยู่แล้วเพิ่มเป็นผู้ติดต่อ ถ้ายังไม่มีสร้างบริษัทใหม่ให้ด้วย
 async function upsertFromCard(f: Record<string, string | null>, empId?: string): Promise<{ customerId: number; createdCompany: boolean; companyName: string; contactName: string | null; contactUpdated?: boolean }> {
   if (!supabase) throw new Error("ยังไม่ได้เชื่อมต่อฐานข้อมูล");
@@ -211,11 +219,10 @@ async function upsertFromCard(f: Record<string, string | null>, empId?: string):
     postcode: (f.postcode ?? "").trim() || null,
   };
   const cardTaxId = (f.tax_id ?? "").replace(/[^0-9]/g, "") || null; // เก็บเฉพาะตัวเลข 13 หลัก
-  // สาขา + ที่อยู่อื่นๆ (Factory 2 ฯลฯ) จากนามบัตร → เก็บไว้ในโน้ต
-  const noteExtra = [
-    (f.branch ?? "").trim() && `สาขา: ${(f.branch ?? "").trim()}`,
-    (f.other_addresses ?? "").trim() && `ที่อยู่เพิ่มเติม: ${(f.other_addresses ?? "").trim()}`,
-  ].filter(Boolean).join(" | ") || null;
+  // สาขาที่ระบุบนนามบัตร เช่น (Branch 1) → เก็บสั้นๆ ในโน้ต / ที่อยู่อื่นๆ → ตาราง customer_branches
+  const noteExtra = (f.branch ?? "").trim() ? `สาขา: ${(f.branch ?? "").trim()}` : null;
+  const cardBranches = (Array.isArray((f as Record<string, unknown>).branches) ? (f as Record<string, unknown>).branches as CardBranch[] : [])
+    .filter((b) => b && ((b.address ?? "").trim() || (b.province ?? "").trim()));
   // เช็คซ้ำ 3 ชั้น: Tax ID (แม่นสุด) > ชื่อ normalize (เทียบทั้งชื่อไทยและอังกฤษ) > ที่อยู่ normalize
   const { data: allNames } = await supabase.from("customers").select("id,name,name_en,contact_name,address,province,tax_id,note");
   const rows = (allNames as { id: number; name: string; name_en: string | null; contact_name: string | null; address: string | null; province: string | null; tax_id: string | null; note: string | null }[]) ?? [];
@@ -255,6 +262,28 @@ async function upsertFromCard(f: Record<string, string | null>, empId?: string):
     if (error) throw error;
     customerId = cust.id;
     createdCompany = true;
+  }
+  // บันทึกที่อยู่สาขาอื่นๆ จากนามบัตรลงตารางสาขา (กันซ้ำด้วยที่อยู่ normalize)
+  if (cardBranches.length) {
+    const normA = (s?: string | null) => (s ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+    const mainAddr = normA(address);
+    const { data: exB } = await supabase.from("customer_branches").select("address").eq("customer_id", customerId);
+    const have = new Set(((exB as { address: string | null }[]) ?? []).map((b) => normA(b.address)).filter(Boolean));
+    const fresh = cardBranches.filter((b) => {
+      const na = normA(b.address);
+      return na && na !== mainAddr && !have.has(na);
+    });
+    if (fresh.length) {
+      await supabase.from("customer_branches").insert(fresh.map((b) => ({
+        customer_id: customerId,
+        label: (b.label ?? "").trim() || null,
+        address: (b.address ?? "").trim() || null,
+        subdistrict: (b.subdistrict ?? "").trim() || null,
+        district: (b.district ?? "").trim() || null,
+        province: (b.province ?? "").trim() || null,
+        postcode: (b.postcode ?? "").trim() || null,
+      })));
+    }
   }
   let contactUpdated = false;
   if (contactName) {
@@ -740,6 +769,7 @@ type DbContact = { id: number; customer_id: number; name: string; name_en: strin
 type DbQuoteLite = { id: number; doc_no: string; customer_name: string; total: number; status: string; created_at: string };
 type DbCustDoc = { id: number; customer_id: number; doc_type: string; doc_no: string | null; title: string; amount: number | null; doc_date: string | null; file_url: string | null; note: string | null; created_by: string | null; created_at: string };
 const DOC_TYPES = ["ใบสั่งซื้อ (PO)", "สัญญา", "ใบส่งมอบงาน", "ใบแจ้งหนี้ / ใบเสร็จ", "อื่นๆ"];
+type DbBranch = { id: number; customer_id: number; label: string | null; address: string | null; subdistrict: string | null; district: string | null; province: string | null; postcode: string | null; phone: string | null; note: string | null };
 
 function CustomersTab() {
   const { access, empId } = useDept();
@@ -765,6 +795,11 @@ function CustomersTab() {
   const [editContactId, setEditContactId] = useState<number | null>(null);
   const [merging, setMerging] = useState(false);
   const [mergeTarget, setMergeTarget] = useState("");
+  // สาขา/ที่อยู่อื่นๆ ของลูกค้า
+  const [branches, setBranches] = useState<DbBranch[]>([]);
+  const [brAdding, setBrAdding] = useState(false);
+  const [editBranchId, setEditBranchId] = useState<number | null>(null);
+  const [br, setBr] = useState<{ label: string; address: string; subdistrict: string; district: string; province: string; postcode: string; phone: string }>({ label: "", address: "", subdistrict: "", district: "", province: "", postcode: "", phone: "" });
   // เมนูย่อยในรายละเอียดลูกค้า: ข้อมูล / ประวัติเอกสาร
   const [detailView, setDetailView] = useState<"info" | "history">("info");
   const [quotes, setQuotes] = useState<DbQuoteLite[]>([]);
@@ -794,6 +829,8 @@ function CustomersTab() {
     ]);
     setQuotes((qt.data as DbQuoteLite[]) ?? []);
     setCustDocs((cd.data as DbCustDoc[]) ?? []);
+    const { data: brs } = await supabase.from("customer_branches").select("*").order("created_at");
+    setBranches((brs as DbBranch[]) ?? []);
     setEmps((e.data as { id: string; name: string }[]) ?? []);
     const list = (c.data as DbCustomerFull[]) ?? [];
     setCustomers(list);
@@ -824,6 +861,7 @@ function CustomersTab() {
     return n === normCompany(selected.name) || (selected.name_en ? n === normCompany(selected.name_en) : false);
   }) : [];
   const selDocs = selected ? custDocs.filter((d) => d.customer_id === selected.id) : [];
+  const selBranches = selected ? branches.filter((b) => b.customer_id === selected.id) : [];
   const list = customers.filter((c) =>
     (!provFilter || c.province === provFilter) &&
     (!indFilter || c.industry === indFilter) &&
@@ -911,6 +949,34 @@ function CustomersTab() {
     await load();
     setSelectedId(tgt.id);
     setMsg(`✅ รวมแล้ว — ย้ายผู้ติดต่อ ${r.contacts_moved} คน, ดีล ${r.deals_moved} ตัว ไปที่ ${tgt.name}`);
+  };
+
+  const saveBranch = async () => {
+    if (!supabase || !selected || !br.address.trim()) return;
+    const row = {
+      label: br.label.trim() || null, address: br.address.trim() || null, subdistrict: br.subdistrict.trim() || null,
+      district: br.district.trim() || null, province: br.province || null, postcode: br.postcode.trim() || null, phone: br.phone.trim() || null,
+    };
+    if (editBranchId !== null) {
+      await supabase.from("customer_branches").update(row).eq("id", editBranchId);
+    } else {
+      await supabase.from("customer_branches").insert({ customer_id: selected.id, ...row });
+    }
+    setBrAdding(false); setEditBranchId(null);
+    setBr({ label: "", address: "", subdistrict: "", district: "", province: "", postcode: "", phone: "" });
+    load();
+  };
+
+  const delBranch = async (b: DbBranch) => {
+    if (!supabase) return;
+    if (!confirm(`ลบสาขา "${b.label || b.address || ""}"?`)) return;
+    await supabase.from("customer_branches").delete().eq("id", b.id);
+    load();
+  };
+
+  const startEditBranch = (b: DbBranch) => {
+    setEditBranchId(b.id); setBrAdding(true);
+    setBr({ label: b.label ?? "", address: b.address ?? "", subdistrict: b.subdistrict ?? "", district: b.district ?? "", province: b.province ?? "", postcode: b.postcode ?? "", phone: b.phone ?? "" });
   };
 
   const addDoc = async () => {
@@ -1233,6 +1299,88 @@ function CustomersTab() {
                   </div>
                 )}
                 {editForm(false)}
+              </div>
+
+              {/* สาขา / ที่อยู่อื่นๆ */}
+              <div className="card-white p-5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-bold text-navy text-[14.5px]">🏢 สาขา / ที่อยู่อื่นๆ <span className="text-sky text-[12px]">({selBranches.length})</span></p>
+                  {!readOnly && !brAdding && (
+                    <button onClick={() => { setBrAdding(true); setEditBranchId(null); setBr({ label: "", address: "", subdistrict: "", district: "", province: "", postcode: "", phone: "" }); }}
+                      className="btn btn-outline text-[12px] py-1.5 px-3">＋ เพิ่มสาขา</button>
+                  )}
+                </div>
+                <div className="mt-3 grid gap-2 min-[700px]:grid-cols-2">
+                  {selBranches.map((b) => (
+                    <div key={b.id} className="rounded-xl border border-ice p-3 text-[12.5px]">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="font-bold text-navy">🏢 {b.label || "สาขา"}</p>
+                        {!readOnly && (
+                          <span className="flex gap-1 shrink-0">
+                            <button onClick={() => startEditBranch(b)} className="text-[11px] font-bold bg-ice text-sky rounded px-1.5 py-0.5 hover:bg-sky/20">✎ แก้ไข</button>
+                            <button onClick={() => delBranch(b)} className="text-[11px] font-bold bg-ice text-muted rounded px-1.5 py-0.5 hover:bg-[#D94141]/10 hover:text-[#D94141]">🗑</button>
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-muted mt-1">{[b.address, b.subdistrict, b.district, b.province, b.postcode].filter(Boolean).join(" ") || "—"}</p>
+                      {b.phone && <p className="text-[11.5px] text-muted/80 mt-0.5">📞 {b.phone}</p>}
+                    </div>
+                  ))}
+                  {selBranches.length === 0 && !brAdding && <p className="text-[12.5px] text-muted/70">ยังไม่มีสาขา — สแกนนามบัตรที่มีหลายที่อยู่ ระบบจะเพิ่มให้อัตโนมัติ หรือกดเพิ่มเอง</p>}
+                </div>
+                {brAdding && !readOnly && (
+                  <div className="mt-3 rounded-xl border-2 border-sky/40 bg-ice/30 p-3.5">
+                    <p className="text-[12.5px] font-bold text-navy">{editBranchId !== null ? "แก้ไขสาขา" : "เพิ่มสาขา / ที่อยู่อื่น"}</p>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      <div>
+                        <label className="text-[11px] font-bold text-muted">ชื่อสาขา (เช่น Factory 2, Head Office)</label>
+                        <input value={br.label} onChange={(e) => setBr({ ...br, label: e.target.value })}
+                          className="mt-1 w-full rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px]" />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-bold text-muted">โทร (ถ้ามี)</label>
+                        <input value={br.phone} onChange={(e) => setBr({ ...br, phone: e.target.value })}
+                          className="mt-1 w-full rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px]" />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="text-[11px] font-bold text-muted">ที่อยู่ (เลขที่/หมู่/ถนน/อาคาร/นิคม) *</label>
+                        <input value={br.address} onChange={(e) => setBr({ ...br, address: e.target.value })}
+                          className="mt-1 w-full rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px]" />
+                      </div>
+                      <div className="sm:col-span-2 grid grid-cols-2 min-[600px]:grid-cols-4 gap-2">
+                        <div>
+                          <label className="text-[11px] font-bold text-muted">ตำบล/แขวง</label>
+                          <input value={br.subdistrict} onChange={(e) => setBr({ ...br, subdistrict: e.target.value })}
+                            className="mt-1 w-full rounded-lg border border-ice px-2 py-1.5 text-[12.5px]" />
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-bold text-muted">อำเภอ/เขต</label>
+                          <input value={br.district} onChange={(e) => setBr({ ...br, district: e.target.value })}
+                            className="mt-1 w-full rounded-lg border border-ice px-2 py-1.5 text-[12.5px]" />
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-bold text-muted">จังหวัด</label>
+                          <select value={br.province} onChange={(e) => setBr({ ...br, province: e.target.value })}
+                            className="mt-1 w-full rounded-lg border border-ice px-1.5 py-1.5 text-[12.5px] bg-white">
+                            <option value="">— เลือก —</option>
+                            {THAI_PROVINCES.map((pv) => <option key={pv} value={pv}>{pv}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[11px] font-bold text-muted">รหัสไปรษณีย์</label>
+                          <input value={br.postcode} onChange={(e) => setBr({ ...br, postcode: e.target.value })}
+                            className="mt-1 w-full rounded-lg border border-ice px-2 py-1.5 text-[12.5px]" />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-2.5 flex gap-2">
+                      <button onClick={saveBranch} disabled={!br.address.trim()} className="btn btn-primary text-[12.5px] py-1.5 px-3.5 disabled:opacity-50">
+                        {editBranchId !== null ? "บันทึกการแก้ไข" : "เพิ่มสาขา"}
+                      </button>
+                      <button onClick={() => { setBrAdding(false); setEditBranchId(null); }} className="btn btn-outline text-[12.5px] py-1.5 px-3">ยกเลิก</button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* ผู้ติดต่อ */}
