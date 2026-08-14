@@ -191,7 +191,8 @@ function ProductsTab({ products, canSeePrice, readOnly, reload }: {
 
   // หมวดแบบไดนามิก — เฉพาะหมวดที่มีสินค้าจริง (คง "อื่นๆ" ไว้ท้ายเสมอ)
   const allCats = [...[...new Set(products.map((p) => p.category))].filter((c) => c && c !== "อื่นๆ").sort((a, b) => a.localeCompare(b, "th")), "อื่นๆ"];
-  const allSeries = [...new Set(products.map((p) => p.series).filter(Boolean))] as string[];
+  // ซีรีส์ผูกกับหมวดที่เลือก — เลือกหมวดแล้วเห็นเฉพาะซีรีส์ในหมวดนั้น
+  const allSeries = [...new Set(products.filter((p) => !cat || p.category === cat).map((p) => p.series).filter(Boolean))].sort() as string[];
 
   // ค้นหาได้ทุกอย่าง: Part No / ชื่อ / รุ่น / ซีรีส์ / ยี่ห้อ / หมวด / สเปกเต็ม
   const list = products.filter((p) =>
@@ -231,7 +232,7 @@ function ProductsTab({ products, canSeePrice, readOnly, reload }: {
           <div className="flex flex-wrap gap-2">
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 Part No. / ชื่อ / รุ่น / สเปก เช่น PNP, IP67..."
               className="rounded-lg border border-ice px-3 py-1.5 text-[12.5px] w-56" />
-            <select value={cat} onChange={(e) => setCat(e.target.value)} className="rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px] bg-white max-w-[190px]">
+            <select value={cat} onChange={(e) => { setCat(e.target.value); setSer(""); }} className="rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px] bg-white max-w-[190px]">
               <option value="">ทุกหมวด</option>
               {allCats.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
