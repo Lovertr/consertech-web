@@ -3,7 +3,7 @@
 // โมดูลข้อมูล Master — สินค้าจริงจากฐานข้อมูล (มีรูป + จัดการได้) + คลังสินค้า + รุ่นรถ AGV + Template + ฐานความรู้
 // ราคากลางแสดงเฉพาะแผนกที่มีสิทธิ์ (ตาม Permission Matrix)
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import StaffShell, { useDept } from "@/components/staff/StaffShell";
 import { agvModels, docTemplates, knowledgeBase } from "@/lib/staffData";
 import { supabase } from "@/lib/supabase";
@@ -14,8 +14,16 @@ const tabs = ["สินค้า/อุปกรณ์", "คลังสิน
 export type DbProduct = {
   id: number; code: string; name: string; description: string | null;
   category: string; unit: string; price: number; image_url: string | null;
-  stock: number; min_stock: number; status: string; created_at: string;
+  stock: number; min_stock: number; status: string;
+  brand: string | null; series: string | null; model: string | null; specs: string | null;
+  created_at: string;
 };
+
+// URL ไฟล์แคตตาล็อกในระบบ (เก็บใน Supabase Storage — ดาวน์โหลดส่งลูกค้าได้)
+const CATALOG_FILES = [
+  { label: "📥 แคตตาล็อก Loongain (PDF)", path: "catalogs/Loongain_Catalog_TH.pdf" },
+  { label: "📥 แคตตาล็อก Loongain (Excel)", path: "catalogs/Loongain_Catalog_TH.xlsx" },
+];
 type DbMovement = { id: number; product_id: number; emp_id: string | null; type: string; qty: number; note: string | null; created_at: string };
 
 const CATEGORIES = ["เซนเซอร์", "ขับเคลื่อน", "เครือข่าย", "พลังงาน", "ควบคุม", "ความปลอดภัย", "บริการ", "อื่นๆ"];
@@ -117,7 +125,7 @@ function ProductForm({ product, onDone, onCancel }: { product: DbProduct | null;
           <div>
             <label className="text-[11.5px] font-bold text-muted">หมวดหมู่</label>
             <select value={category} onChange={(e) => setCategory(e.target.value)} className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px] bg-white">
-              {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              {[...new Set([...CATEGORIES, category])].filter(Boolean).map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
           <div className="sm:col-span-2">
@@ -176,13 +184,40 @@ function ProductsTab({ products, canSeePrice, readOnly, reload }: {
 }) {
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("");
+  const [ser, setSer] = useState("");
+  const [expanded, setExpanded] = useState<number | null>(null);
   const [editing, setEditing] = useState<DbProduct | null>(null);
   const [adding, setAdding] = useState(false);
 
+  // หมวด/ซีรีส์แบบไดนามิก — รวมของเดิม + จากแคตตาล็อกที่นำเข้า
+  const allCats = [...new Set([...CATEGORIES, ...products.map((p) => p.category)])].filter(Boolean);
+  const allSeries = [...new Set(products.map((p) => p.series).filter(Boolean))] as string[];
+
+  // ค้นหาได้ทุกอย่าง: Part No / ชื่อ / รุ่น / ซีรีส์ / ยี่ห้อ / หมวด / สเปกเต็ม
   const list = products.filter((p) =>
     (!cat || p.category === cat) &&
-    (!q.trim() || (p.code + " " + p.name + " " + (p.description ?? "")).toLowerCase().includes(q.trim().toLowerCase()))
+    (!ser || p.series === ser) &&
+    (!q.trim() || [p.code, p.name, p.model, p.series, p.brand, p.category, p.description, p.specs]
+      .filter(Boolean).join(" ").toLowerCase().includes(q.trim().toLowerCase()))
   );
+
+  // ดาวน์โหลดรายการที่กรองเป็น Excel (เผื่อส่งให้ลูกค้า — ไม่มีข้อมูลสต็อกภายใน)
+  const exportList = async () => {
+    const XLSX = await import("xlsx");
+    const rows = list.map((p) => ({
+      "Part No.": p.code, "รุ่น": p.model ?? "", "ชื่อสินค้า": p.name, "ยี่ห้อ": p.brand ?? "",
+      "ซีรีส์": p.series ?? "", "หมวด": p.category, "สเปกย่อ": p.description ?? "",
+      ...(canSeePrice ? { "ราคากลาง (฿)": p.price } : {}),
+      "หน่วย": p.unit, "สเปกเต็ม": p.specs ?? "",
+    }));
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, "สินค้า");
+    XLSX.writeFile(wb, `สินค้า-${cat || ser || "ทั้งหมด"}-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  const catalogUrl = (path: string) =>
+    supabase ? supabase.storage.from("attachments").getPublicUrl(path).data.publicUrl : "#";
 
   return (
     <>
@@ -194,16 +229,35 @@ function ProductsTab({ products, canSeePrice, readOnly, reload }: {
         <div className="flex flex-wrap justify-between items-center gap-2 px-5 pt-4 pb-2">
           <p className="font-bold text-navy">สินค้าและอุปกรณ์ <span className="text-sky text-[13px]">({list.length}/{products.length})</span></p>
           <div className="flex flex-wrap gap-2">
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 ค้นหารหัส/ชื่อ/สเปก..."
-              className="rounded-lg border border-ice px-3 py-1.5 text-[12.5px] w-44" />
-            <select value={cat} onChange={(e) => setCat(e.target.value)} className="rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px] bg-white">
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 Part No. / ชื่อ / รุ่น / สเปก เช่น PNP, IP67..."
+              className="rounded-lg border border-ice px-3 py-1.5 text-[12.5px] w-56" />
+            <select value={cat} onChange={(e) => setCat(e.target.value)} className="rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px] bg-white max-w-[190px]">
               <option value="">ทุกหมวด</option>
-              {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              {allCats.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
+            {allSeries.length > 0 && (
+              <select value={ser} onChange={(e) => setSer(e.target.value)} className="rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px] bg-white max-w-[150px]">
+                <option value="">ทุกซีรีส์</option>
+                {allSeries.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            )}
             {!readOnly && !adding && !editing && (
               <button onClick={() => setAdding(true)} className="btn btn-primary text-[12.5px] py-1.5 px-3">＋ เพิ่มสินค้า</button>
             )}
           </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 px-5 pb-2">
+          <button onClick={exportList} className="text-[11.5px] font-semibold text-sky hover:text-brand border border-ice rounded-lg px-2.5 py-1"
+            title="ดาวน์โหลดรายการที่กรองอยู่เป็น Excel — ส่งให้ลูกค้าได้ (ไม่มีข้อมูลสต็อก)">
+            ⬇ Excel รายการที่กรอง ({list.length})
+          </button>
+          {CATALOG_FILES.map((f) => (
+            <a key={f.path} href={catalogUrl(f.path)} target="_blank" rel="noreferrer"
+              className="text-[11.5px] font-semibold text-sky hover:text-brand border border-ice rounded-lg px-2.5 py-1">
+              {f.label}
+            </a>
+          ))}
+          <span className="text-[11px] text-muted/60">กดที่ชื่อสินค้าเพื่อดูสเปกเต็ม</span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[760px] text-[13px]">
@@ -221,14 +275,21 @@ function ProductsTab({ products, canSeePrice, readOnly, reload }: {
             </thead>
             <tbody>
               {list.map((p, i) => (
-                <tr key={p.id} className={i % 2 ? "bg-ice/30" : ""}>
+                <React.Fragment key={p.id}>
+                <tr className={i % 2 ? "bg-ice/30" : ""}>
                   <td className="px-4 py-2"><Thumb url={p.image_url} /></td>
                   <td className="px-3 py-2 font-semibold text-sky whitespace-nowrap">{p.code}</td>
                   <td className="px-3 py-2 text-navy">
-                    <p className="font-semibold leading-snug">{p.name}</p>
-                    {p.description && <p className="text-[11.5px] text-muted/80 leading-snug mt-0.5 line-clamp-1">{p.description}</p>}
+                    <button onClick={() => setExpanded(expanded === p.id ? null : p.id)} className="text-left w-full" title={p.specs ? "กดดูสเปกเต็ม" : undefined}>
+                      <p className="font-semibold leading-snug hover:text-brand">
+                        {p.name}
+                        {p.series && <span className="ml-1.5 text-[10px] font-bold bg-ice text-sky rounded px-1.5 py-0.5 align-middle">{p.series}</span>}
+                        {p.specs && <span className="ml-1 text-[10px] text-muted/60">{expanded === p.id ? "▲" : "▼"}</span>}
+                      </p>
+                      {p.description && <p className="text-[11.5px] text-muted/80 leading-snug mt-0.5 line-clamp-1">{p.description}</p>}
+                    </button>
                   </td>
-                  <td className="px-3 py-2 text-muted whitespace-nowrap">{p.category}</td>
+                  <td className="px-3 py-2 text-muted whitespace-nowrap max-w-[150px] truncate" title={p.category}>{p.category}</td>
                   <td className="px-3 py-2 text-right font-semibold text-navy whitespace-nowrap">
                     {canSeePrice ? `${fmt(p.price)} ฿/${p.unit}` : <span className="text-muted/50">•••••</span>}
                   </td>
@@ -245,6 +306,19 @@ function ProductsTab({ products, canSeePrice, readOnly, reload }: {
                     </td>
                   )}
                 </tr>
+                {expanded === p.id && p.specs && (
+                  <tr className="bg-ice/40">
+                    <td colSpan={readOnly ? 7 : 8} className="px-5 py-3">
+                      <div className="rounded-xl bg-white border border-ice p-3.5">
+                        <p className="text-[12px] font-bold text-navy mb-1.5">
+                          📋 สเปกเต็ม — {p.brand ? `${p.brand} ` : ""}{p.series ?? ""} {p.model ?? ""}
+                        </p>
+                        <pre className="text-[11.5px] text-ink whitespace-pre-wrap font-sans leading-relaxed max-h-[300px] overflow-y-auto">{p.specs}</pre>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </React.Fragment>
               ))}
               {list.length === 0 && (
                 <tr><td colSpan={8} className="px-4 py-8 text-center text-muted/70 text-[12.5px]">ไม่พบสินค้า</td></tr>
