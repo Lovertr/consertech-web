@@ -8,6 +8,7 @@ import Link from "next/link";
 import StaffShell, { useDept } from "@/components/staff/StaffShell";
 import { dealStages } from "@/lib/staffData";
 import { THAI_PROVINCES } from "@/lib/thaiProvinces";
+import { THAI_INDUSTRIES, SOLUTION_INTERESTS } from "@/lib/industries";
 import { supabase } from "@/lib/supabase";
 import { callCopilot } from "@/lib/copilot";
 
@@ -321,14 +322,16 @@ function AddDealForm({ customers, empId, onDone }: { customers: DbCustomer[]; em
           <datalist id="crm-customers">{customers.map((c) => <option key={c.id} value={c.name} />)}</datalist>
         </div>
         <div>
-          <label className="text-[11.5px] font-bold text-muted">อุตสาหกรรม</label>
-          <input value={industry} onChange={(e) => setIndustry(e.target.value)} placeholder="เช่น ยานยนต์ / โลจิสติกส์"
+          <label className="text-[11.5px] font-bold text-muted">อุตสาหกรรม (พิมพ์ค้นหา/เลือก)</label>
+          <input list="deal-industry-options" value={industry} onChange={(e) => setIndustry(e.target.value)} placeholder="เช่น ยานยนต์และชิ้นส่วน (Automotive)"
             className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
+          <datalist id="deal-industry-options">{THAI_INDUSTRIES.map((i) => <option key={i} value={i} />)}</datalist>
         </div>
         <div>
           <label className="text-[11.5px] font-bold text-muted">โซลูชันที่สนใจ</label>
-          <input value={solution} onChange={(e) => setSolution(e.target.value)} placeholder="เช่น Lifter AGV x2 + FMS"
+          <input list="deal-solution-options" value={solution} onChange={(e) => setSolution(e.target.value)} placeholder="เช่น Lifter AGV x2 + FMS"
             className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
+          <datalist id="deal-solution-options">{SOLUTION_INTERESTS.map((s) => <option key={s} value={s} />)}</datalist>
         </div>
         <div>
           <label className="text-[11.5px] font-bold text-muted">มูลค่าโดยประมาณ</label>
@@ -710,7 +713,7 @@ type DbCustomerFull = {
   id: number; name: string; name_en: string | null; industry: string | null; contact_name: string | null;
   phone: string | null; email: string | null; line_id: string | null; note: string | null;
   address: string | null; subdistrict: string | null; district: string | null; province: string | null; postcode: string | null;
-  tax_id: string | null; map_url: string | null; owner: string | null; created_at: string;
+  tax_id: string | null; map_url: string | null; owner: string | null; interests: string[] | null; created_at: string;
 };
 type DbContact = { id: number; customer_id: number; name: string; name_en: string | null; position: string | null; phone: string | null; email: string | null; line_id: string | null; created_by: string | null };
 
@@ -723,6 +726,9 @@ function CustomersTab() {
   const [custDeals, setCustDeals] = useState<DbDeal[]>([]);
   const [q, setQ] = useState("");
   const [provFilter, setProvFilter] = useState("");
+  const [indFilter, setIndFilter] = useState("");
+  const [intFilter, setIntFilter] = useState("");
+  const [stageFilter, setStageFilter] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
   // ฟอร์มแก้ไขบริษัท
@@ -735,6 +741,10 @@ function CustomersTab() {
   const [editContactId, setEditContactId] = useState<number | null>(null);
   const [merging, setMerging] = useState(false);
   const [mergeTarget, setMergeTarget] = useState("");
+  // สร้างดีลใหม่จากหน้าลูกค้า (prefill บริษัทที่เลือกให้เลย)
+  const [dealOpen, setDealOpen] = useState(false);
+  const [dSolution, setDSolution] = useState(""); const [dValue, setDValue] = useState("กลาง"); const [dNext, setDNext] = useState("");
+  const [dSaving, setDSaving] = useState(false); const [dErr, setDErr] = useState("");
   const [ec, setEc] = useState<{ name: string; name_en: string; position: string; phone: string; email: string; line_id: string }>({ name: "", name_en: "", position: "", phone: "", email: "", line_id: "" });
 
   const load = useCallback(async () => {
@@ -760,8 +770,10 @@ function CustomersTab() {
       name: selected.name, name_en: selected.name_en, industry: selected.industry, address: selected.address,
       subdistrict: selected.subdistrict, district: selected.district, province: selected.province, postcode: selected.postcode,
       map_url: selected.map_url, note: selected.note, owner: selected.owner, tax_id: selected.tax_id,
+      interests: selected.interests ?? [],
     });
     setMsg("");
+    setDealOpen(false); setDErr("");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId, selected?.name, selected?.industry, selected?.address, selected?.province, selected?.map_url, selected?.note]);
 
@@ -769,7 +781,10 @@ function CustomersTab() {
   const selDeals = selected ? custDeals.filter((d) => d.customer_id === selected.id || d.customer_name === selected.name) : [];
   const list = customers.filter((c) =>
     (!provFilter || c.province === provFilter) &&
-    (!q.trim() || (c.name + " " + (c.name_en ?? "") + " " + (c.industry ?? "") + " " + (c.province ?? "") + " " + (c.district ?? "") + " " + contacts.filter((x) => x.customer_id === c.id).map((x) => x.name + " " + (x.name_en ?? "")).join(" ")).toLowerCase().includes(q.trim().toLowerCase())));
+    (!indFilter || c.industry === indFilter) &&
+    (!intFilter || (c.interests ?? []).includes(intFilter)) &&
+    (!stageFilter || custDeals.some((d) => (d.customer_id === c.id || d.customer_name === c.name) && d.stage === stageFilter)) &&
+    (!q.trim() || (c.name + " " + (c.name_en ?? "") + " " + (c.industry ?? "") + " " + (c.interests ?? []).join(" ") + " " + (c.province ?? "") + " " + (c.district ?? "") + " " + contacts.filter((x) => x.customer_id === c.id).map((x) => x.name + " " + (x.name_en ?? "")).join(" ")).toLowerCase().includes(q.trim().toLowerCase())));
 
   const empName = (id: string | null) => emps.find((x) => x.id === id)?.name ?? id ?? "-";
 
@@ -804,6 +819,7 @@ function CustomersTab() {
       name: String(edit.name).trim(), name_en: String(edit.name_en ?? "").trim() || null, industry: edit.industry || null, address: edit.address || null,
       subdistrict: edit.subdistrict || null, district: edit.district || null, province: edit.province || null, postcode: edit.postcode || null,
       map_url: edit.map_url || null, note: edit.note || null, owner: (edit.owner as string) || empId || null, tax_id: edit.tax_id || null,
+      interests: edit.interests ?? [],
     }).select("id").single();
     setSaving(false);
     if (error) {
@@ -824,6 +840,7 @@ function CustomersTab() {
       name: String(edit.name).trim(), name_en: String(edit.name_en ?? "").trim() || null, industry: edit.industry || null, address: edit.address || null,
       subdistrict: edit.subdistrict || null, district: edit.district || null, province: edit.province || null, postcode: edit.postcode || null,
       map_url: edit.map_url || null, note: edit.note || null, owner: (edit.owner as string) || null, tax_id: edit.tax_id || null,
+      interests: edit.interests ?? [],
     }).eq("id", selected.id);
     setSaving(false); setMsg("✅ บันทึกแล้ว");
     load();
@@ -849,6 +866,20 @@ function CustomersTab() {
     await load();
     setSelectedId(tgt.id);
     setMsg(`✅ รวมแล้ว — ย้ายผู้ติดต่อ ${r.contacts_moved} คน, ดีล ${r.deals_moved} ตัว ไปที่ ${tgt.name}`);
+  };
+
+  const createDealHere = async () => {
+    if (!supabase || !selected) return;
+    setDSaving(true); setDErr("");
+    const { error } = await supabase.from("deals").insert({
+      customer_id: selected.id, customer_name: selected.name, industry: selected.industry,
+      solution: dSolution.trim() || null, stage: "lead", value_level: dValue,
+      owner: empId || null, next_action: dNext.trim() || null,
+    });
+    setDSaving(false);
+    if (error) { setDErr(error.message); return; }
+    setDealOpen(false); setDSolution(""); setDNext(""); setDValue("กลาง");
+    load();
   };
 
   const addContact = async () => {
@@ -900,9 +931,25 @@ function CustomersTab() {
           placeholder="เช่น ... Co., Ltd." className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
       </div>
       <div className="sm:col-span-2">
-        <label className="text-[11.5px] font-bold text-muted">อุตสาหกรรม</label>
-        <input value={String(edit.industry ?? "")} onChange={(e) => setEdit({ ...edit, industry: e.target.value })} disabled={readOnly}
-          placeholder="เช่น ยานยนต์ / โลจิสติกส์" className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
+        <label className="text-[11.5px] font-bold text-muted">อุตสาหกรรม (พิมพ์ค้นหา/เลือกจากรายการ)</label>
+        <input list="industry-options" value={String(edit.industry ?? "")} onChange={(e) => setEdit({ ...edit, industry: e.target.value })} disabled={readOnly}
+          placeholder="เช่น ยานยนต์และชิ้นส่วน (Automotive)" className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
+        <datalist id="industry-options">{THAI_INDUSTRIES.map((i) => <option key={i} value={i} />)}</datalist>
+      </div>
+      <div className="sm:col-span-2">
+        <label className="text-[11.5px] font-bold text-muted">💡 ความสนใจ (โซลูชันที่ลูกค้าสนใจ — เลือกได้หลายอัน)</label>
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {SOLUTION_INTERESTS.map((s) => {
+            const on = (edit.interests ?? []).includes(s);
+            return (
+              <button key={s} type="button" disabled={readOnly}
+                onClick={() => setEdit({ ...edit, interests: on ? (edit.interests ?? []).filter((x) => x !== s) : [...(edit.interests ?? []), s] })}
+                className={`text-[11.5px] font-semibold rounded-full px-2.5 py-1 border transition ${on ? "bg-brand text-white border-brand" : "bg-white text-muted border-ice hover:border-brand hover:text-brand"}`}>
+                {on ? "✓ " : ""}{s}
+              </button>
+            );
+          })}
+        </div>
       </div>
       <div className="sm:col-span-2">
         <label className="text-[11.5px] font-bold text-muted">👤 ผู้รับผิดชอบ (Sale เจ้าของลูกค้า)</label>
@@ -980,7 +1027,7 @@ function CustomersTab() {
         {/* รายชื่อบริษัท */}
         <div className="card-white p-4 min-w-0">
           <div className="flex items-center justify-between gap-2">
-            <p className="font-bold text-navy text-[14px]">ลูกค้า <span className="text-sky text-[12px]">({customers.length})</span></p>
+            <p className="font-bold text-navy text-[14px]">ลูกค้า <span className="text-sky text-[12px]">({list.length === customers.length ? customers.length : `${list.length}/${customers.length}`})</span></p>
             {!readOnly && !adding && (
               <button onClick={() => { setAdding(true); setEdit({}); setMsg(""); }} className="btn btn-primary text-[12px] py-1.5 px-2.5">＋ เพิ่มเอง</button>
             )}
@@ -995,6 +1042,34 @@ function CustomersTab() {
               return <option key={pv} value={pv}>{pv}{n > 0 ? ` (${n})` : ""}</option>;
             })}
           </select>
+          <select value={indFilter} onChange={(e) => setIndFilter(e.target.value)}
+            className="mt-2 w-full rounded-lg border border-ice px-2.5 py-2 text-[12.5px] bg-white">
+            <option value="">🏭 ทุกอุตสาหกรรม</option>
+            {[...new Set([...THAI_INDUSTRIES, ...customers.map((c) => c.industry).filter(Boolean) as string[]])].map((i) => {
+              const n = customers.filter((c) => c.industry === i).length;
+              return n > 0 ? <option key={i} value={i}>{i} ({n})</option> : null;
+            })}
+          </select>
+          <select value={intFilter} onChange={(e) => setIntFilter(e.target.value)}
+            className="mt-2 w-full rounded-lg border border-ice px-2.5 py-2 text-[12.5px] bg-white">
+            <option value="">💡 ทุกความสนใจ</option>
+            {SOLUTION_INTERESTS.map((s) => {
+              const n = customers.filter((c) => (c.interests ?? []).includes(s)).length;
+              return <option key={s} value={s}>{s}{n > 0 ? ` (${n})` : ""}</option>;
+            })}
+          </select>
+          <select value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}
+            className="mt-2 w-full rounded-lg border border-ice px-2.5 py-2 text-[12.5px] bg-white">
+            <option value="">🤝 ทุกขั้นดีล Pipeline</option>
+            {STAGES.map((s) => {
+              const n = customers.filter((c) => custDeals.some((d) => (d.customer_id === c.id || d.customer_name === c.name) && d.stage === s.key)).length;
+              return <option key={s.key} value={s.key}>{s.label}{n > 0 ? ` (${n})` : ""}</option>;
+            })}
+          </select>
+          {(provFilter || indFilter || intFilter || stageFilter) && (
+            <button onClick={() => { setProvFilter(""); setIndFilter(""); setIntFilter(""); setStageFilter(""); }}
+              className="mt-2 text-[11.5px] font-semibold text-sky hover:text-brand">✕ ล้างตัวกรองทั้งหมด</button>
+          )}
           <div className="mt-2.5 space-y-2 max-h-[520px] overflow-y-auto pr-1">
             {list.map((c) => {
               const n = contacts.filter((x) => x.customer_id === c.id).length;
@@ -1029,6 +1104,13 @@ function CustomersTab() {
                     <p className="font-bold text-navy text-[16px]">{selected.name}</p>
                     {selected.name_en && <p className="text-[12.5px] text-sky font-semibold">{selected.name_en}</p>}
                     <p className="text-[11.5px] text-muted mt-0.5">👤 ผู้รับผิดชอบ: <strong className="text-brand">{empName(selected.owner)}</strong></p>
+                    {(selected.interests ?? []).length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {(selected.interests ?? []).map((s) => (
+                          <span key={s} className="text-[10.5px] font-bold bg-amber/15 text-[#9A6A10] rounded-full px-2 py-0.5">💡 {s}</span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   <div className="flex gap-2">
                     {selected.map_url && (
@@ -1125,7 +1207,44 @@ function CustomersTab() {
 
               {/* ดีลของบริษัทนี้ */}
               <div className="card-white p-5">
-                <p className="font-bold text-navy text-[14.5px]">🤝 ดีลกับบริษัทนี้ <span className="text-sky text-[12px]">({selDeals.length})</span></p>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-bold text-navy text-[14.5px]">🤝 ดีลกับบริษัทนี้ <span className="text-sky text-[12px]">({selDeals.length})</span></p>
+                  {!readOnly && !dealOpen && (
+                    <button onClick={() => { setDealOpen(true); setDSolution((selected.interests ?? []).join(" + ")); }}
+                      className="btn btn-primary text-[12px] py-1.5 px-3">＋ สร้างดีลกับบริษัทนี้</button>
+                  )}
+                </div>
+                {dealOpen && (
+                  <div className="mt-3 rounded-xl border-2 border-brand/30 bg-ice/30 p-3.5">
+                    <p className="text-[12.5px] font-bold text-navy">สร้างดีลใหม่ — {selected.name}</p>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                      <div className="sm:col-span-2">
+                        <label className="text-[11px] font-bold text-muted">โซลูชันที่สนใจ</label>
+                        <input list="deal-solutions" value={dSolution} onChange={(e) => setDSolution(e.target.value)} placeholder="เช่น AGV Lifter x2 + FMS"
+                          className="mt-1 w-full rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px]" />
+                        <datalist id="deal-solutions">{SOLUTION_INTERESTS.map((s) => <option key={s} value={s} />)}</datalist>
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-bold text-muted">มูลค่าโดยประมาณ</label>
+                        <select value={dValue} onChange={(e) => setDValue(e.target.value)} className="mt-1 w-full rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px] bg-white">
+                          <option value="สูง">สูง</option><option value="กลาง">กลาง</option><option value="เล็ก">เล็ก</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-bold text-muted">งานถัดไป</label>
+                        <input value={dNext} onChange={(e) => setDNext(e.target.value)} placeholder="เช่น โทรนัด Site Survey"
+                          className="mt-1 w-full rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px]" />
+                      </div>
+                    </div>
+                    {dErr && <p className="mt-2 text-[12px] text-[#D94141]">⚠ {dErr}</p>}
+                    <div className="mt-2.5 flex gap-2">
+                      <button onClick={createDealHere} disabled={dSaving} className="btn btn-primary text-[12.5px] py-1.5 px-3.5 disabled:opacity-50">
+                        {dSaving ? "กำลังบันทึก..." : "บันทึกดีล (เริ่มที่ขั้น Lead)"}
+                      </button>
+                      <button onClick={() => setDealOpen(false)} className="btn btn-outline text-[12.5px] py-1.5 px-3">ยกเลิก</button>
+                    </div>
+                  </div>
+                )}
                 <div className="mt-3 space-y-2">
                   {selDeals.map((d) => (
                     <div key={d.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-ice p-3 text-[12.5px]">
