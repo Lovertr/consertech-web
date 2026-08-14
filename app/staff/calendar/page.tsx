@@ -11,24 +11,24 @@ import { supabase } from "@/lib/supabase";
 type DbEvent = {
   id: number; title: string; event_type: string; event_date: string; event_time: string | null;
   duration_min: number; location: string | null; customer_id: number | null; contact_id: number | null;
-  ref_doc: string | null; notes: string | null; attendees: string[]; created_by: string | null; created_at: string;
+  ref_doc: string | null; notes: string | null; attendees: string[]; created_by: string | null;
+  project_id: number | null; deal_id: number | null; created_at: string;
 };
-type EmpLite = { id: string; name: string };
+type EmpLite = { id: string; name: string; nickname: string | null };
 type CustLite = { id: number; name: string };
 type ContactLite = { id: number; customer_id: number; name: string; position: string | null };
-// รายการรวมที่แสดงบนปฏิทิน (event / ประชุม / วันลา)
+type ProjLite = { id: number; code: string | null; name: string };
+type DealLite = { id: number; customer_name: string; solution: string | null };
+// รายการรวมที่แสดงบนปฏิทิน (event / ประชุม / วันลา) — who = เจ้าของ (ใช้ทำป้ายตัวอักษรรายคน)
 type CalItem = {
   key: string; date: string; time: string | null; title: string; type: string;
-  source: "event" | "meeting" | "leave"; ev?: DbEvent; sub?: string;
+  source: "event" | "meeting" | "leave"; ev?: DbEvent; sub?: string; who?: string | null; att?: string[];
 };
 
+// สีประจำตัวพนักงาน (กำหนดตามลำดับในรายชื่อ — คงที่ ไม่สุ่ม)
+const PERSON_COLORS = ["#7C3AED", "#15659E", "#DB2777", "#D97706", "#2E9E5B", "#0891B2", "#DC2626", "#65A30D", "#9333EA", "#EA580C", "#475569", "#0E3A5C"];
+
 const EVENT_TYPES = ["โทรนัด", "ประชุม", "เข้าพบลูกค้า", "เดินทาง", "อื่นๆ"] as const;
-const typeColor = (t: string) =>
-  t === "โทรนัด" ? "bg-sky/80"
-  : t === "ประชุม" ? "bg-brand"
-  : t === "เข้าพบลูกค้า" ? "bg-amber"
-  : t === "เดินทาง" ? "bg-[#2E9E5B]"
-  : "bg-navy/50";
 const typeChip = (t: string) =>
   t === "โทรนัด" ? "bg-ice text-sky"
   : t === "ประชุม" ? "bg-brand/10 text-brand"
@@ -79,53 +79,73 @@ function CalendarBody() {
   const [fCust, setFCust] = useState<number | null>(null); const [fContact, setFContact] = useState<number | null>(null);
   const [fCustText, setFCustText] = useState(""); const [fContactText, setFContactText] = useState("");
   const [fNotes, setFNotes] = useState(""); const [fAtt, setFAtt] = useState<string[]>([]);
+  const [fProj, setFProj] = useState<number | null>(null); const [fDeal, setFDeal] = useState<number | null>(null);
+  const [projects, setProjects] = useState<ProjLite[]>([]);
+  const [deals, setDeals] = useState<DealLite[]>([]);
+  // กรองปฏิทินรายคน (เลือกได้หลายคน) — null = ยังไม่เลือก → default ตัวเอง
+  const [selEmps, setSelEmps] = useState<string[] | null>(null);
   const [saving, setSaving] = useState(false); const [err, setErr] = useState("");
 
   const empName = (id: string | null) => emps.find((e) => e.id === id)?.name ?? id ?? "-";
   const custName = (id: number | null) => customers.find((c) => c.id === id)?.name;
   const contactName = (id: number | null) => contacts.find((c) => c.id === id)?.name;
+  // ป้ายประจำตัว: วงกลมสีประจำคน + อักษรตัวแรกของชื่อเล่น/ชื่อ
+  const personColor = (id?: string | null) => {
+    const idx = emps.findIndex((e) => e.id === id);
+    return idx >= 0 ? PERSON_COLORS[idx % PERSON_COLORS.length] : "#94A3B8";
+  };
+  const personInitial = (id?: string | null) => {
+    const e = emps.find((x) => x.id === id);
+    return (e?.nickname?.trim() || e?.name?.trim() || "?").charAt(0);
+  };
+  const effSel = selEmps ?? (empId ? [empId] : []);
 
   const load = useCallback(async () => {
     if (!supabase || !empId) return;
-    const [ev, em, cu, ct, mt, lv] = await Promise.all([
+    const [ev, em, cu, ct, mt, lv, pj, dl] = await Promise.all([
       supabase.from("calendar_events").select("*").order("event_date").order("event_time"),
-      supabase.from("employees").select("id,name"),
+      supabase.from("employees").select("id,name,nickname").order("id"),
       supabase.from("customers").select("id,name").order("name"),
       supabase.from("customer_contacts").select("id,customer_id,name,position"),
       supabase.from("meetings").select("id,title,meet_date,meet_time,attendees,created_by,status"),
-      supabase.from("leave_requests").select("id,emp_id,type,date_from,date_to,status").eq("emp_id", empId).eq("status", "อนุมัติแล้ว"),
+      supabase.from("leave_requests").select("id,emp_id,type,date_from,date_to,status").eq("status", "อนุมัติแล้ว"),
+      supabase.from("projects").select("id,code,name").order("created_at", { ascending: false }),
+      supabase.from("deals").select("id,customer_name,solution").order("created_at", { ascending: false }),
     ]);
-    // เฉพาะที่เกี่ยวข้องกับฉัน: สร้างเอง หรือถูกเชิญ
-    const mine = ((ev.data as DbEvent[]) ?? []).filter((e) => e.created_by === empId || (e.attendees ?? []).includes(empId));
-    setEvents(mine);
-    setEmps((em.data as EmpLite[]) ?? []);
+    // โหลดทุกคน — การมองเห็นคุมด้วยตัวกรองรายคนด้านบนปฏิทิน (ค่าเริ่มต้น = ตัวเอง)
+    setEvents((ev.data as DbEvent[]) ?? []);
+    const empList = (em.data as EmpLite[]) ?? [];
+    setEmps(empList);
     setCustomers((cu.data as CustLite[]) ?? []);
     setContacts((ct.data as ContactLite[]) ?? []);
-    // ประชุมจากโมดูลประชุม (ที่ฉันเกี่ยวข้อง) + วันลาที่อนุมัติ
+    setProjects((pj.data as ProjLite[]) ?? []);
+    setDeals((dl.data as DealLite[]) ?? []);
+    const eName = (id: string | null) => empList.find((x) => x.id === id)?.name ?? "";
     const extras: CalItem[] = [];
     for (const m of (mt.data as { id: number; title: string; meet_date: string; meet_time: string | null; attendees: string[]; created_by: string | null; status: string }[]) ?? []) {
       if (m.status === "ยกเลิก") continue;
-      if (m.created_by === empId || (m.attendees ?? []).includes(empId)) {
-        extras.push({ key: `mt${m.id}`, date: m.meet_date, time: m.meet_time, title: m.title, type: "ประชุม", source: "meeting", sub: "จากโมดูลประชุม" });
-      }
+      extras.push({ key: `mt${m.id}`, date: m.meet_date, time: m.meet_time, title: m.title, type: "ประชุม", source: "meeting", sub: "จากโมดูลประชุม", who: m.created_by, att: m.attendees ?? [] });
     }
-    for (const l of (lv.data as { id: number; type: string; date_from: string; date_to: string }[]) ?? []) {
+    for (const l of (lv.data as { id: number; emp_id: string; type: string; date_from: string; date_to: string }[]) ?? []) {
       const from = new Date(l.date_from + "T00:00:00"); const to = new Date(l.date_to + "T00:00:00");
       for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
-        extras.push({ key: `lv${l.id}-${dateStr(d)}`, date: dateStr(d), time: null, title: `🌴 ${l.type}`, type: "ลา", source: "leave" });
+        extras.push({ key: `lv${l.id}-${dateStr(d)}`, date: dateStr(d), time: null, title: `🌴 ${l.type}`, type: "ลา", source: "leave", sub: eName(l.emp_id) || undefined, who: l.emp_id });
       }
     }
     setExtraItems(extras);
   }, [empId]);
   useEffect(() => { load(); }, [load]);
 
+  // แสดงเฉพาะของคนที่เลือกในตัวกรอง (เจ้าของหรือผู้ถูกเชิญ)
+  const passFilter = (who?: string | null, att?: string[]) =>
+    effSel.length === 0 || (who != null && effSel.includes(who)) || (att ?? []).some((a) => effSel.includes(a));
   const allItems: CalItem[] = [
-    ...events.map((e) => ({
+    ...events.filter((e) => passFilter(e.created_by, e.attendees)).map((e) => ({
       key: `ev${e.id}`, date: e.event_date, time: e.event_time, title: e.title, type: e.event_type,
-      source: "event" as const, ev: e,
+      source: "event" as const, ev: e, who: e.created_by, att: e.attendees ?? [],
       sub: [custName(e.customer_id), contactName(e.contact_id)].filter(Boolean).join(" · ") || undefined,
     })),
-    ...extraItems,
+    ...extraItems.filter((x) => passFilter(x.who, x.att)),
   ];
   const itemsOn = (d: string) => allItems.filter((x) => x.date === d).sort((a, b) => (a.time ?? "").localeCompare(b.time ?? ""));
 
@@ -141,14 +161,15 @@ function CalendarBody() {
 
   const resetForm = () => {
     setEditId(null); setFTitle(""); setFType("โทรนัด"); setFDate(selDate); setFTime("09:00");
-    setFDur(60); setFLoc(""); setFCust(null); setFContact(null); setFCustText(""); setFContactText(""); setFNotes(""); setFAtt(empId ? [empId] : []); setErr("");
+    setFDur(60); setFLoc(""); setFCust(null); setFContact(null); setFCustText(""); setFContactText(""); setFNotes(""); setFAtt(empId ? [empId] : []);
+    setFProj(null); setFDeal(null); setErr("");
   };
   const openNew = () => { resetForm(); setShowForm(true); };
   const openEdit = (e: DbEvent) => {
     setEditId(e.id); setFTitle(e.title); setFType(e.event_type); setFDate(e.event_date); setFTime(e.event_time ?? "09:00");
     setFDur(e.duration_min); setFLoc(e.location ?? ""); setFCust(e.customer_id); setFContact(e.contact_id);
     setFCustText(custName(e.customer_id) ?? ""); setFContactText(contactName(e.contact_id) ?? "");
-    setFNotes(e.notes ?? ""); setFAtt(e.attendees ?? []); setErr(""); setShowForm(true);
+    setFNotes(e.notes ?? ""); setFAtt(e.attendees ?? []); setFProj(e.project_id); setFDeal(e.deal_id); setErr(""); setShowForm(true);
   };
 
   const save = async () => {
@@ -157,7 +178,7 @@ function CalendarBody() {
     const row = {
       title: fTitle.trim(), event_type: fType, event_date: fDate, event_time: fTime || null,
       duration_min: fDur, location: fLoc.trim() || null, customer_id: fCust, contact_id: fContact,
-      notes: fNotes.trim() || null, attendees: fAtt,
+      notes: fNotes.trim() || null, attendees: fAtt, project_id: fProj, deal_id: fDeal,
     };
     const r = editId === null
       ? await supabase.from("calendar_events").insert({ ...row, created_by: empId || null })
@@ -249,6 +270,22 @@ function CalendarBody() {
                 <datalist id="cal-contacts">{custContacts.map((c) => <option key={c.id} value={c.name}>{c.position ?? ""}</option>)}</datalist>
               </div>
             )}
+            <div>
+              <label className="text-[11.5px] font-bold text-muted">📁 โปรเจกต์ที่เกี่ยวข้อง (ถ้ามี)</label>
+              <select value={fProj ?? ""} onChange={(e) => setFProj(e.target.value ? Number(e.target.value) : null)}
+                className="mt-1 w-full rounded-lg border border-ice px-2.5 py-2 text-[13px] bg-white">
+                <option value="">— ไม่ระบุ —</option>
+                {projects.map((p) => <option key={p.id} value={p.id}>{p.code ? `${p.code} — ` : ""}{p.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[11.5px] font-bold text-muted">🤝 ดีลที่เกี่ยวข้อง (ถ้ามี)</label>
+              <select value={fDeal ?? ""} onChange={(e) => setFDeal(e.target.value ? Number(e.target.value) : null)}
+                className="mt-1 w-full rounded-lg border border-ice px-2.5 py-2 text-[13px] bg-white">
+                <option value="">— ไม่ระบุ —</option>
+                {deals.map((d) => <option key={d.id} value={d.id}>D-{String(d.id).padStart(3, "0")} — {d.customer_name}{d.solution ? ` (${d.solution})` : ""}</option>)}
+              </select>
+            </div>
             <div className="sm:col-span-2">
               <label className="text-[11.5px] font-bold text-muted">โน้ต</label>
               <input value={fNotes} onChange={(e) => setFNotes(e.target.value)} placeholder="รายละเอียดเพิ่มเติม เตรียมเอกสาร ฯลฯ"
@@ -292,6 +329,28 @@ function CalendarBody() {
               <button onClick={() => setMonth(new Date(year, mon + 1, 1))} className="btn btn-outline text-[13px] py-1.5 px-3">→</button>
             </div>
           </div>
+          {/* กรองรายคน — เลือกได้หลายคน */}
+          <div className="mb-3 flex flex-wrap items-center gap-1.5">
+            <span className="text-[11.5px] font-bold text-muted mr-1">👥 ดูปฏิทินของ:</span>
+            {emps.map((e) => {
+              const on = effSel.includes(e.id);
+              return (
+                <button key={e.id} onClick={() => setSelEmps(on ? effSel.filter((x) => x !== e.id) : [...effSel, e.id])}
+                  className={`flex items-center gap-1 text-[11.5px] font-semibold rounded-full pl-1 pr-2.5 py-0.5 border transition ${on ? "border-transparent text-white" : "bg-white border-ice text-muted hover:border-brand"}`}
+                  style={on ? { backgroundColor: personColor(e.id) } : undefined}>
+                  <span className="w-4 h-4 rounded-full flex items-center justify-center text-[9.5px] font-bold text-white shrink-0"
+                    style={{ backgroundColor: on ? "rgba(255,255,255,0.25)" : personColor(e.id) }}>
+                    {personInitial(e.id)}
+                  </span>
+                  {e.nickname?.trim() || e.name}
+                </button>
+              );
+            })}
+            <button onClick={() => setSelEmps(effSel.length === emps.length ? (empId ? [empId] : []) : emps.map((e) => e.id))}
+              className="text-[11px] font-semibold text-sky hover:text-brand px-1">
+              {effSel.length === emps.length ? "✕ เหลือแค่ฉัน" : "✓ ทุกคน"}
+            </button>
+          </div>
           <div className="grid grid-cols-7 text-center text-[11.5px] font-bold text-sky border-b border-ice pb-1.5">
             {["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"].map((d) => <span key={d}>{d}</span>)}
           </div>
@@ -309,8 +368,11 @@ function CalendarBody() {
                   <p className={`text-[11px] font-bold ${isToday ? "text-amber" : "text-navy"}`}>{Number(d.slice(-2))}</p>
                   <div className="mt-0.5 flex flex-wrap gap-0.5">
                     {items.slice(0, 4).map((x) => (
-                      <span key={x.key} title={x.title}
-                        className={`w-2 h-2 rounded-full ${x.source === "leave" ? "bg-[#2E9E5B]/50" : typeColor(x.type)}`} />
+                      <span key={x.key} title={`${x.title}${x.who ? ` — ${empName(x.who)}` : ""}`}
+                        className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white leading-none ${x.source === "leave" ? "opacity-35" : ""}`}
+                        style={{ backgroundColor: personColor(x.who) }}>
+                        {personInitial(x.who)}
+                      </span>
                     ))}
                     {items.length > 4 && <span className="text-[9px] text-muted">+{items.length - 4}</span>}
                   </div>
@@ -318,12 +380,18 @@ function CalendarBody() {
               );
             })}
           </div>
-          <p className="mt-3 text-[11px] text-muted/70">
-            {EVENT_TYPES.map((t) => (
-              <span key={t} className="mr-3"><span className={`inline-block w-2.5 h-2.5 rounded-full mr-1 ${typeColor(t)}`} />{t}</span>
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted/70">
+            {emps.filter((e) => effSel.includes(e.id)).map((e) => (
+              <span key={e.id} className="flex items-center gap-1">
+                <span className="w-3.5 h-3.5 rounded-full flex items-center justify-center text-[8.5px] font-bold text-white" style={{ backgroundColor: personColor(e.id) }}>{personInitial(e.id)}</span>
+                {e.nickname?.trim() || e.name}
+              </span>
             ))}
-            <span><span className="inline-block w-2.5 h-2.5 rounded-full mr-1 bg-[#2E9E5B]/50" />วันลา</span>
-          </p>
+            <span className="flex items-center gap-1">
+              <span className="w-3.5 h-3.5 rounded-full opacity-35 flex items-center justify-center text-[8.5px] font-bold text-white bg-navy">ก</span>
+              = วันลา (สีจาง)
+            </span>
+          </div>
         </div>
 
         {/* รายการของวันที่เลือก */}
@@ -347,6 +415,14 @@ function CalendarBody() {
                     {x.ev && (
                       <>
                         {x.ev.location && <p className="text-[11.5px] text-muted mt-1">📍 {x.ev.location}</p>}
+                        {(x.ev.project_id || x.ev.deal_id) && (
+                          <p className="text-[11px] text-muted/80 mt-0.5">
+                            {[
+                              x.ev.project_id && (() => { const p = projects.find((pp) => pp.id === x.ev!.project_id); return p ? `📁 ${p.code ? p.code + " " : ""}${p.name}` : null; })(),
+                              x.ev.deal_id && (() => { const dd = deals.find((z) => z.id === x.ev!.deal_id); return dd ? `🤝 D-${String(dd.id).padStart(3, "0")} ${dd.customer_name}` : null; })(),
+                            ].filter(Boolean).join(" · ")}
+                          </p>
+                        )}
                         {x.ev.attendees.length > 0 && (
                           <p className="text-[11px] text-muted/80 mt-0.5">👥 {x.ev.attendees.map(empName).join(", ")}</p>
                         )}
@@ -383,7 +459,8 @@ function CalendarBody() {
                 <button key={x.key} onClick={() => { setSelDate(x.date); const d = new Date(x.date + "T00:00:00"); setMonth(new Date(d.getFullYear(), d.getMonth(), 1)); }}
                   className="w-full text-left text-[12px] rounded-lg px-2 py-1 hover:bg-ice/50 transition flex gap-2">
                   <span className="text-muted/80 shrink-0 w-14">{new Date(x.date + "T00:00:00").toLocaleDateString("th-TH", { day: "numeric", month: "short" })}</span>
-                  <span className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${x.source === "leave" ? "bg-[#2E9E5B]/50" : typeColor(x.type)}`} />
+                  <span className={`w-3.5 h-3.5 rounded-full mt-0.5 shrink-0 flex items-center justify-center text-[8.5px] font-bold text-white ${x.source === "leave" ? "opacity-35" : ""}`}
+                    style={{ backgroundColor: personColor(x.who) }}>{personInitial(x.who)}</span>
                   <span className="text-ink truncate">{x.time ? `${x.time} ` : ""}{x.title}</span>
                 </button>
               ))}
