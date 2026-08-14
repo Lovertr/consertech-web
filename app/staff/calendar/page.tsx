@@ -99,6 +99,8 @@ function CalendarBody() {
     return (e?.nickname?.trim() || e?.name?.trim() || "?").charAt(0);
   };
   const effSel = selEmps ?? (empId ? [empId] : []);
+  // เจ้าของกิจกรรมที่แสดงบนป้าย = ผู้ร่วมกิจกรรม (คนที่ไปทำจริง) — ถ้าไม่มีค่อยใช้คนสร้าง
+  const badgesFor = (x: CalItem): (string | null)[] => (x.att && x.att.length ? x.att : [x.who ?? null]);
 
   const load = useCallback(async () => {
     if (!supabase || !empId) return;
@@ -367,14 +369,21 @@ function CalendarBody() {
                   }`}>
                   <p className={`text-[11px] font-bold ${isToday ? "text-amber" : "text-navy"}`}>{Number(d.slice(-2))}</p>
                   <div className="mt-0.5 flex flex-wrap gap-0.5">
-                    {items.slice(0, 4).map((x) => (
-                      <span key={x.key} title={`${x.title}${x.who ? ` — ${empName(x.who)}` : ""}`}
-                        className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white leading-none ${x.source === "leave" ? "opacity-35" : ""}`}
-                        style={{ backgroundColor: personColor(x.who) }}>
-                        {personInitial(x.who)}
-                      </span>
-                    ))}
-                    {items.length > 4 && <span className="text-[9px] text-muted">+{items.length - 4}</span>}
+                    {(() => {
+                      const badges = items.flatMap((x) => badgesFor(x).map((w, i) => ({ k: `${x.key}-${i}`, w, x })));
+                      return (
+                        <>
+                          {badges.slice(0, 4).map(({ k, w, x }) => (
+                            <span key={k} title={`${x.title} — ${empName(w)}`}
+                              className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white leading-none ${x.source === "leave" ? "opacity-35" : ""}`}
+                              style={{ backgroundColor: personColor(w) }}>
+                              {personInitial(w)}
+                            </span>
+                          ))}
+                          {badges.length > 4 && <span className="text-[9px] text-muted">+{badges.length - 4}</span>}
+                        </>
+                      );
+                    })()}
                   </div>
                 </button>
               );
@@ -460,7 +469,7 @@ function CalendarBody() {
                   className="w-full text-left text-[12px] rounded-lg px-2 py-1 hover:bg-ice/50 transition flex gap-2">
                   <span className="text-muted/80 shrink-0 w-14">{new Date(x.date + "T00:00:00").toLocaleDateString("th-TH", { day: "numeric", month: "short" })}</span>
                   <span className={`w-3.5 h-3.5 rounded-full mt-0.5 shrink-0 flex items-center justify-center text-[8.5px] font-bold text-white ${x.source === "leave" ? "opacity-35" : ""}`}
-                    style={{ backgroundColor: personColor(x.who) }}>{personInitial(x.who)}</span>
+                    style={{ backgroundColor: personColor(badgesFor(x)[0]) }}>{personInitial(badgesFor(x)[0])}</span>
                   <span className="text-ink truncate">{x.time ? `${x.time} ` : ""}{x.title}</span>
                 </button>
               ))}
