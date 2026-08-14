@@ -841,6 +841,10 @@ function CustomersTab() {
   const [brAdding, setBrAdding] = useState(false);
   const [editBranchId, setEditBranchId] = useState<number | null>(null);
   const [br, setBr] = useState<{ label: string; address: string; subdistrict: string; district: string; province: string; postcode: string; phone: string }>({ label: "", address: "", subdistrict: "", district: "", province: "", postcode: "", phone: "" });
+  // นำเข้า/ส่งออก Excel
+  const [impBusy, setImpBusy] = useState(false);
+  const [impMsg, setImpMsg] = useState("");
+  const impRef = useRef<HTMLInputElement>(null);
   // เมนูย่อยในรายละเอียดลูกค้า: ข้อมูล / ประวัติเอกสาร
   const [detailView, setDetailView] = useState<"info" | "history">("info");
   const [quotes, setQuotes] = useState<DbQuoteLite[]>([]);
@@ -996,6 +1000,136 @@ function CustomersTab() {
     await load();
     setSelectedId(tgt.id);
     setMsg(`✅ รวมแล้ว — ย้ายผู้ติดต่อ ${r.contacts_moved} คน, ดีล ${r.deals_moved} ตัว ไปที่ ${tgt.name}`);
+  };
+
+  // ── ดาวน์โหลดข้อมูลลูกค้าทั้งหมดเป็น Excel (3 ชีต: ลูกค้า / ผู้ติดต่อ / สาขา) ──
+  const exportExcel = async () => {
+    const XLSX = await import("xlsx");
+    const wb = XLSX.utils.book_new();
+    const eName = (id: string | null) => emps.find((x) => x.id === id)?.name ?? "";
+    const custRows = customers.map((c) => ({
+      "ชื่อบริษัท": c.name, "ชื่อบริษัท (อังกฤษ)": c.name_en ?? "", "อุตสาหกรรม": c.industry ?? "",
+      "ความสนใจ": (c.interests ?? []).join(", "), "ผู้รับผิดชอบ": eName(c.owner),
+      "ที่อยู่": c.address ?? "", "ตำบล/แขวง": c.subdistrict ?? "", "อำเภอ/เขต": c.district ?? "",
+      "จังหวัด": c.province ?? "", "รหัสไปรษณีย์": c.postcode ?? "", "Tax ID": c.tax_id ?? "",
+      "โทร": c.phone ?? "", "อีเมล": c.email ?? "", "ในเครือของ": customers.find((x) => x.id === c.parent_customer_id)?.name ?? "", "โน้ต": c.note ?? "",
+    }));
+    const contactRows = contacts.map((ct) => ({
+      "บริษัท": customers.find((c) => c.id === ct.customer_id)?.name ?? "",
+      "ชื่อผู้ติดต่อ": ct.name, "ชื่อ (อังกฤษ)": ct.name_en ?? "", "ตำแหน่ง": ct.position ?? "",
+      "โทร": ct.phone ?? "", "อีเมล": ct.email ?? "", "LINE": ct.line_id ?? "", "เพิ่มโดย": eName(ct.created_by),
+    }));
+    const branchRows = branches.map((b) => ({
+      "บริษัท": customers.find((c) => c.id === b.customer_id)?.name ?? "",
+      "ชื่อสาขา": b.label ?? "", "ที่อยู่": b.address ?? "", "ตำบล/แขวง": b.subdistrict ?? "",
+      "อำเภอ/เขต": b.district ?? "", "จังหวัด": b.province ?? "", "รหัสไปรษณีย์": b.postcode ?? "", "โทร": b.phone ?? "",
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(custRows), "ลูกค้า");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(contactRows), "ผู้ติดต่อ");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(branchRows), "สาขา");
+    XLSX.writeFile(wb, `ลูกค้า-CONSERTECH-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  // ── นำเข้าลูกค้าจากไฟล์ Excel (ฟอร์แมตเดียวกับไฟล์ที่ดาวน์โหลด — เช็คซ้ำให้ ไม่ทับข้อมูลเดิม) ──
+  const importExcel = async (file: File) => {
+    if (!supabase) return;
+    setImpBusy(true); setImpMsg("");
+    try {
+      const XLSX = await import("xlsx");
+      const wb = XLSX.read(await file.arrayBuffer());
+      const pick = (r: Record<string, unknown>, keys: string[]) => {
+        for (const k of keys) { const v = r[k]; if (v !== undefined && v !== null && String(v).trim()) return String(v).trim(); }
+        return "";
+      };
+      // โหลดรายชื่อล่าสุดจาก DB เพื่อเช็คซ้ำ
+      const { data: exData } = await supabase.from("customers").select("id,name,name_en,tax_id,industry,address,subdistrict,district,province,postcode,phone,email,note,owner,parent_customer_id,interests");
+      const exRows = (exData as (DbCustomerFull & { interests: string[] | null })[]) ?? [];
+      const findCust = (name: string, taxId: string) =>
+        (taxId ? exRows.find((c) => c.tax_id && c.tax_id.replace(/[^0-9]/g, "") === taxId) : undefined) ??
+        exRows.find((c) => normCompany(c.name) === normCompany(name) || (c.name_en ? normCompany(c.name_en) === normCompany(name) : false));
+      const empByName = (n: string) => emps.find((e) => e.name.trim() === n.trim())?.id ?? null;
+
+      let created = 0, updated = 0, skipped = 0;
+      const ws = wb.Sheets["ลูกค้า"] ?? wb.Sheets[wb.SheetNames[0]];
+      const rows = ws ? XLSX.utils.sheet_to_json<Record<string, unknown>>(ws) : [];
+      const parentWish: { name: string; parent: string }[] = [];
+      for (const r of rows) {
+        const name = pick(r, ["ชื่อบริษัท", "บริษัท", "name", "Name", "Company", "company"]);
+        if (!name) { skipped++; continue; }
+        const taxId = pick(r, ["Tax ID", "tax_id", "เลขผู้เสียภาษี"]).replace(/[^0-9]/g, "");
+        const fields = {
+          name_en: pick(r, ["ชื่อบริษัท (อังกฤษ)", "name_en"]) || null,
+          industry: pick(r, ["อุตสาหกรรม", "industry"]) || null,
+          address: pick(r, ["ที่อยู่", "address"]) || null,
+          subdistrict: pick(r, ["ตำบล/แขวง", "ตำบล", "subdistrict"]) || null,
+          district: pick(r, ["อำเภอ/เขต", "อำเภอ", "district"]) || null,
+          province: pick(r, ["จังหวัด", "province"]) || null,
+          postcode: pick(r, ["รหัสไปรษณีย์", "postcode"]) || null,
+          phone: pick(r, ["โทร", "phone", "Tel"]) || null,
+          email: pick(r, ["อีเมล", "email", "E-mail"]) || null,
+          note: pick(r, ["โน้ต", "note"]) || null,
+          tax_id: taxId || null,
+        };
+        const interests = pick(r, ["ความสนใจ", "interests"]).split(",").map((s) => s.trim()).filter(Boolean);
+        const ownerId = empByName(pick(r, ["ผู้รับผิดชอบ", "owner"]));
+        const parentName = pick(r, ["ในเครือของ", "parent"]);
+        if (parentName) parentWish.push({ name, parent: parentName });
+        const hit = findCust(name, taxId);
+        if (hit) {
+          // มีอยู่แล้ว → เติมเฉพาะช่องที่ยังว่าง ไม่ทับข้อมูลเดิม
+          const patch: Record<string, unknown> = {};
+          (Object.keys(fields) as (keyof typeof fields)[]).forEach((k) => { if (!hit[k] && fields[k]) patch[k] = fields[k]; });
+          if ((hit.interests ?? []).length === 0 && interests.length) patch.interests = interests;
+          if (!hit.owner && ownerId) patch.owner = ownerId;
+          if (Object.keys(patch).length) { await supabase.from("customers").update(patch).eq("id", hit.id); updated++; } else skipped++;
+        } else {
+          const { data: ins, error } = await supabase.from("customers")
+            .insert({ name, ...fields, interests, owner: ownerId ?? empId ?? null }).select("id,name,name_en,tax_id").single();
+          if (error) { skipped++; } else { created++; exRows.push({ ...(ins as DbCustomerFull), interests } as DbCustomerFull & { interests: string[] }); }
+        }
+      }
+      // เชื่อมเครือตามคอลัมน์ "ในเครือของ" (หลังจากทุกบริษัทเข้าระบบแล้ว)
+      for (const w of parentWish) {
+        const child = findCust(w.name, ""); const parent = findCust(w.parent, "");
+        if (child && parent && child.id !== parent.id && !child.parent_customer_id) {
+          await supabase.from("customers").update({ parent_customer_id: parent.id }).eq("id", child.id);
+        }
+      }
+      // ชีตผู้ติดต่อ (ถ้ามี)
+      let ctAdded = 0;
+      const wsc = wb.Sheets["ผู้ติดต่อ"];
+      if (wsc) {
+        const cRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(wsc);
+        const { data: exCt } = await supabase.from("customer_contacts").select("id,customer_id,name,name_en");
+        const ctAll = (exCt as { id: number; customer_id: number; name: string; name_en: string | null }[]) ?? [];
+        const normP = (s: string | null) => (s ?? "").toLowerCase().replace(/\s+/g, "");
+        for (const r of cRows) {
+          const compName = pick(r, ["บริษัท", "ชื่อบริษัท", "company"]);
+          const ctName = pick(r, ["ชื่อผู้ติดต่อ", "ชื่อ", "name"]);
+          if (!compName || !ctName) continue;
+          const comp = findCust(compName, "");
+          if (!comp) continue;
+          const dup = ctAll.find((x) => x.customer_id === comp.id && (normP(x.name) === normP(ctName) || (x.name_en ? normP(x.name_en) === normP(ctName) : false)));
+          if (dup) continue; // มีคนนี้แล้ว — ไม่เพิ่มซ้ำ ไม่ทับ
+          const { error } = await supabase.from("customer_contacts").insert({
+            customer_id: comp.id, name: ctName,
+            name_en: pick(r, ["ชื่อ (อังกฤษ)", "name_en"]) || null,
+            position: pick(r, ["ตำแหน่ง", "position"]) || null,
+            phone: pick(r, ["โทร", "phone"]) || null,
+            email: pick(r, ["อีเมล", "email"]) || null,
+            line_id: pick(r, ["LINE", "line_id"]) || null,
+            created_by: empId || null,
+          });
+          if (!error) { ctAdded++; ctAll.push({ id: 0, customer_id: comp.id, name: ctName, name_en: null }); }
+        }
+      }
+      await load();
+      setImpMsg(`✅ นำเข้าแล้ว — บริษัทใหม่ ${created}, เติมข้อมูลบริษัทเดิม ${updated}, ข้าม ${skipped}${ctAdded ? `, ผู้ติดต่อใหม่ ${ctAdded}` : ""}`);
+    } catch (e) {
+      setImpMsg("⚠ นำเข้าไม่สำเร็จ: " + String((e as Error).message ?? e));
+    } finally {
+      setImpBusy(false);
+    }
   };
 
   const saveBranch = async () => {
@@ -1223,6 +1357,22 @@ function CustomersTab() {
   return (
     <>
       {!readOnly && <BizCardScan onAddLead={scanCard} addLabel="＋ บันทึกเข้าระบบลูกค้า" />}
+      {/* นำเข้า / ส่งออก Excel */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <input ref={impRef} type="file" accept=".xlsx,.xls" className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) importExcel(f); e.target.value = ""; }} />
+        <button onClick={exportExcel} className="btn btn-outline text-[12.5px] py-1.5 px-3" title="ดาวน์โหลดลูกค้า + ผู้ติดต่อ + สาขาทั้งหมดเป็นไฟล์ Excel">
+          ⬇ ดาวน์โหลด Excel
+        </button>
+        {!readOnly && (
+          <button onClick={() => impRef.current?.click()} disabled={impBusy} className="btn btn-outline text-[12.5px] py-1.5 px-3 disabled:opacity-60"
+            title="นำเข้าจากไฟล์ Excel ฟอร์แมตเดียวกับไฟล์ดาวน์โหลด — เช็คซ้ำให้อัตโนมัติ ไม่ทับข้อมูลเดิม">
+            {impBusy ? "⏳ กำลังนำเข้า..." : "⬆ นำเข้า Excel"}
+          </button>
+        )}
+        {impMsg && <span className={`text-[12px] font-semibold ${impMsg.startsWith("✅") ? "text-[#2E9E5B]" : "text-[#D94141]"}`}>{impMsg}</span>}
+        <span className="text-[11px] text-muted/70">แนะนำ: ดาวน์โหลดก่อนเพื่อดูฟอร์แมต แล้วเติมข้อมูลกลับเข้ามา</span>
+      </div>
       <div className="grid gap-5 min-[1040px]:grid-cols-[320px_1fr] items-start">
         {/* รายชื่อบริษัท */}
         <div className="card-white p-4 min-w-0">
