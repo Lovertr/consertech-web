@@ -27,12 +27,7 @@ export const THAI_INDUSTRIES: string[] = [
 
 // ความสนใจของลูกค้า = โซลูชันที่บริษัทขาย (เลือกได้หลายอัน)
 export const SOLUTION_INTERESTS: string[] = [
-  "AGV Pallet Jack / Forklift",
-  "AGV Tugger / Towing",
-  "AGV Lifter / Underride",
-  "AGV Conveyor / Roller",
-  "AGV Unit Load",
-  "AMR (Autonomous Mobile Robot — หุ่นยนต์เคลื่อนที่อัตโนมัติ)",
+  "AGV, AMR (Automated Guided Vehicle / Autonomous Mobile Robot)",
   "FMS (Fleet Management System)",
   "WMS (Warehouse Management System — ระบบจัดการคลังสินค้า)",
   "MES (Manufacturing Execution System — ระบบจัดการการผลิต)",
