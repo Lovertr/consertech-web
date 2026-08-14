@@ -193,11 +193,16 @@ async function upsertFromCard(f: Record<string, string | null>, empId?: string):
     postcode: (f.postcode ?? "").trim() || null,
   };
   const cardTaxId = (f.tax_id ?? "").replace(/[^0-9]/g, "") || null; // เก็บเฉพาะตัวเลข 13 หลัก
-  // เทียบชื่อแบบ normalize กับทุกบริษัทที่มี (กันซ้ำจากจุด/คอมมา/ช่องว่างต่างกัน)
+  // เช็คซ้ำ 3 ชั้น: Tax ID (แม่นสุด) > ชื่อ normalize > ที่อยู่ normalize
   const { data: allNames } = await supabase.from("customers").select("id,name,contact_name,address,province,tax_id");
+  const rows = (allNames as { id: number; name: string; contact_name: string | null; address: string | null; province: string | null; tax_id: string | null }[]) ?? [];
   const target = normCompany(companyName);
-  const existing = ((allNames as { id: number; name: string; contact_name: string | null; address: string | null; province: string | null; tax_id: string | null }[]) ?? [])
-    .find((c) => normCompany(c.name) === target) ?? null;
+  const normAddr = (s: string | null) => (s ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  const existing =
+    (cardTaxId ? rows.find((c) => c.tax_id && c.tax_id.replace(/[^0-9]/g, "") === cardTaxId) : undefined) ??
+    rows.find((c) => normCompany(c.name) === target) ??
+    (address && normAddr(address).length > 12 ? rows.find((c) => c.address && normAddr(c.address) === normAddr(address)) : undefined) ??
+    null;
   let customerId: number;
   let createdCompany = false;
   if (existing) {
@@ -706,6 +711,8 @@ function CustomersTab() {
   const [cName, setCName] = useState(""); const [cPos, setCPos] = useState("");
   const [cPhone, setCPhone] = useState(""); const [cEmail, setCEmail] = useState(""); const [cLine, setCLine] = useState("");
   const [editContactId, setEditContactId] = useState<number | null>(null);
+  const [merging, setMerging] = useState(false);
+  const [mergeTarget, setMergeTarget] = useState("");
   const [ec, setEc] = useState<{ name: string; position: string; phone: string; email: string; line_id: string }>({ name: "", position: "", phone: "", email: "", line_id: "" });
 
   const load = useCallback(async () => {
@@ -759,6 +766,16 @@ function CustomersTab() {
     if (!supabase || !String(edit.name ?? "").trim()) return;
     const dupe = customers.find((c) => normCompany(c.name) === normCompany(String(edit.name)));
     if (dupe) { setMsg(`⚠ บริษัทนี้มีอยู่แล้วในระบบ: "${dupe.name}" — เลือกจากรายชื่อแล้วเพิ่มผู้ติดต่อแทน`); return; }
+    const newTax = String(edit.tax_id ?? "").replace(/[^0-9]/g, "");
+    if (newTax) {
+      const dupTax = customers.find((c) => c.tax_id && c.tax_id.replace(/[^0-9]/g, "") === newTax);
+      if (dupTax) { setMsg(`⚠ Tax ID นี้ตรงกับ "${dupTax.name}" — น่าจะเป็นบริษัทเดียวกัน (ชื่ออาจสะกดต่าง)`); return; }
+    }
+    const nAddr = String(edit.address ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+    if (nAddr.length > 12) {
+      const dupAddr = customers.find((c) => c.address && c.address.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "") === nAddr);
+      if (dupAddr) { setMsg(`⚠ ที่อยู่นี้ตรงกับ "${dupAddr.name}" — ตรวจสอบก่อนว่าใช่บริษัทเดียวกันหรือไม่`); return; }
+    }
     setSaving(true);
     const { data, error } = await supabase.from("customers").insert({
       name: String(edit.name).trim(), industry: edit.industry || null, address: edit.address || null,
@@ -795,6 +812,20 @@ function CustomersTab() {
     await supabase.from("customers").delete().eq("id", selected.id);
     setSelectedId(null);
     load();
+  };
+
+  const doMerge = async () => {
+    if (!supabase || !selected) return;
+    const tgt = customers.find((c) => c.name === mergeTarget && c.id !== selected.id);
+    if (!tgt) { setMsg("⚠ เลือกบริษัทปลายทางจากรายการก่อน"); return; }
+    if (!confirm(`รวม "${selected.name}" เข้ากับ "${tgt.name}"?\n\nผู้ติดต่อ ดีล และประวัติทั้งหมดจะย้ายไปที่ "${tgt.name}" แล้วลบ "${selected.name}" ทิ้ง — ย้อนกลับไม่ได้`)) return;
+    const { data, error } = await supabase.rpc("merge_customers", { p_from: selected.id, p_into: tgt.id });
+    if (error) { setMsg("⚠ " + error.message); return; }
+    const r = data as { contacts_moved: number; deals_moved: number };
+    setMerging(false); setMergeTarget("");
+    await load();
+    setSelectedId(tgt.id);
+    setMsg(`✅ รวมแล้ว — ย้ายผู้ติดต่อ ${r.contacts_moved} คน, ดีล ${r.deals_moved} ตัว ไปที่ ${tgt.name}`);
   };
 
   const addContact = async () => {
@@ -973,9 +1004,32 @@ function CustomersTab() {
                     {selected.map_url && (
                       <a href={selected.map_url} target="_blank" rel="noreferrer" className="btn btn-outline text-[12px] py-1.5 px-3">📍 เปิดแผนที่</a>
                     )}
+                    {!readOnly && (
+                      <button onClick={() => { setMerging((v) => !v); setMergeTarget(""); }}
+                        className="text-[12px] font-semibold text-sky hover:text-brand px-1" title="รวมบริษัทนี้เข้ากับบริษัทอื่นที่ซ้ำกัน">
+                        🔗 รวมบริษัทซ้ำ
+                      </button>
+                    )}
                     {!readOnly && <button onClick={removeCustomer} className="text-[12px] font-semibold text-[#D94141]/70 hover:text-[#D94141] px-1">🗑 ลบ</button>}
                   </div>
                 </div>
+                {merging && (
+                  <div className="mb-3 rounded-xl border-2 border-sky/40 bg-ice/30 p-3.5">
+                    <p className="text-[12.5px] font-bold text-navy">🔗 รวม &ldquo;{selected.name}&rdquo; เข้ากับบริษัทอื่น</p>
+                    <p className="text-[11.5px] text-muted mt-0.5">ผู้ติดต่อ/ดีล/ประวัติทั้งหมดของบริษัทนี้จะย้ายไปบริษัทปลายทาง แล้วบริษัทนี้จะถูกลบ (ข้อมูลที่ปลายทางยังไม่มีจะถูกเติมจากบริษัทนี้ให้)</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <input list="merge-targets" value={mergeTarget} onChange={(e) => setMergeTarget(e.target.value)}
+                        placeholder="พิมพ์ค้นหาบริษัทปลายทาง (ตัวที่ถูกต้อง)..."
+                        className="flex-1 min-w-[220px] rounded-lg border border-ice px-3 py-2 text-[12.5px]" />
+                      <datalist id="merge-targets">
+                        {customers.filter((c) => c.id !== selected.id).map((c) => <option key={c.id} value={c.name} />)}
+                      </datalist>
+                      <button onClick={doMerge} disabled={!customers.some((c) => c.name === mergeTarget && c.id !== selected.id)}
+                        className="btn btn-primary text-[12.5px] py-2 px-3.5 disabled:opacity-50">รวมเลย</button>
+                      <button onClick={() => setMerging(false)} className="btn btn-outline text-[12.5px] py-2 px-3">ยกเลิก</button>
+                    </div>
+                  </div>
+                )}
                 {editForm(false)}
               </div>
 
