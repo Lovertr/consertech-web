@@ -89,36 +89,42 @@ function AiSummary({ deal, acts }: { deal: DbDeal; acts: DbActivity[] }) {
   );
 }
 
-// ── สแกนนามบัตรด้วย AI → เพิ่มเป็น Lead จริงในฐานข้อมูล ──
+// ── สแกนนามบัตรด้วย AI → เพิ่มเป็น Lead จริงในฐานข้อมูล (รองรับหน้า+หลังนามบัตร) ──
 function BizCardScan({ onAddLead, addLabel = "＋ เพิ่มเป็น Lead ใหม่" }: { onAddLead: (f: Record<string, string | null>) => Promise<string | void>; addLabel?: string }) {
   const [state, setState] = useState<"idle" | "scanning" | "done" | "adding" | "added" | "error">("idle");
   const [fields, setFields] = useState<Record<string, string | null>>({});
+  const [imgs, setImgs] = useState<{ data: string; mime: string }[]>([]);
   const [err, setErr] = useState("");
   const [doneMsg, setDoneMsg] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
+  const modeRef = useRef<"new" | "add">("new");
+
+  const runOcr = async (allImgs: { data: string; mime: string }[]) => {
+    setState("scanning");
+    try {
+      const j = await callCopilot({ action: "ocr_card", images: allImgs });
+      let raw = String(j.text ?? "").trim();
+      if (raw.startsWith("```")) raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
+      const jm = raw.match(/\{[\s\S]*\}/);
+      const f = jm ? JSON.parse(jm[0]) : {};
+      setFields({ ...f, company_name: f.company ?? f.company_name ?? null });
+      setState("done");
+    } catch (e) {
+      setErr(String(e));
+      setState("error");
+    }
+  };
 
   const scan = (file: File) => {
     const reader = new FileReader();
-    reader.onload = async () => {
-      setState("scanning");
-      try {
-        const dataUrl = String(reader.result);
-        const m = dataUrl.match(/^data:(image\/\w+);base64,/);
-        const j = await callCopilot({
-          action: "ocr_card",
-          image: m ? dataUrl.slice(m[0].length) : dataUrl,
-          mime: m ? m[1] : "image/jpeg",
-        });
-        let raw = String(j.text ?? "").trim();
-        if (raw.startsWith("```")) raw = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
-        const jm = raw.match(/\{[\s\S]*\}/);
-        const f = jm ? JSON.parse(jm[0]) : {};
-        setFields({ ...f, company_name: f.company ?? f.company_name ?? null });
-        setState("done");
-      } catch (e) {
-        setErr(String(e));
-        setState("error");
-      }
+    reader.onload = () => {
+      const dataUrl = String(reader.result);
+      const m = dataUrl.match(/^data:(image\/\w+);base64,/);
+      const img = { data: m ? dataUrl.slice(m[0].length) : dataUrl, mime: m ? m[1] : "image/jpeg" };
+      // สแกนใหม่ = เริ่มนามบัตรใบใหม่ / เพิ่มรูป = รวมหน้า-หลังใบเดิมแล้วอ่านซ้ำทั้งชุด
+      const next = modeRef.current === "add" ? [...imgs, img] : [img];
+      setImgs(next);
+      runOcr(next);
     };
     reader.readAsDataURL(file);
   };
@@ -129,6 +135,7 @@ function BizCardScan({ onAddLead, addLabel = "＋ เพิ่มเป็น Le
       const msg = await onAddLead(fields);
       setDoneMsg(typeof msg === "string" ? msg : "✅ เพิ่มแล้ว");
       setState("added");
+      setImgs([]);
     } catch (e) {
       setErr(String(e));
       setState("error");
@@ -140,22 +147,30 @@ function BizCardScan({ onAddLead, addLabel = "＋ เพิ่มเป็น Le
       <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; if (f) scan(f); e.target.value = ""; }} />
       <div className="flex flex-wrap items-center gap-3">
-        <button onClick={() => fileRef.current?.click()} disabled={state === "scanning" || state === "adding"}
+        <button onClick={() => { modeRef.current = "new"; fileRef.current?.click(); }} disabled={state === "scanning" || state === "adding"}
           className="btn btn-outline text-[13px] py-2 px-3.5 disabled:opacity-60">
           {state === "scanning" ? "✨ AI กำลังอ่านนามบัตร..." : "📇 สแกนนามบัตร (ถ่ายรูป/อัปโหลด)"}
         </button>
-        <p className="text-[12px] text-muted">ถ่ายรูปนามบัตรแล้ว AI อ่านข้อมูลกรอกให้จริง <span className="text-[10px] font-bold bg-brand/10 text-brand rounded px-1.5 py-0.5">AI จริง</span></p>
+        {state === "done" && (
+          <button onClick={() => { modeRef.current = "add"; fileRef.current?.click(); }}
+            className="btn btn-outline text-[12.5px] py-2 px-3 border-amber/60 text-[#9A6A10]"
+            title="นามบัตรบางใบมีข้อมูล/ที่อยู่อยู่ด้านหลัง — ถ่ายเพิ่มแล้ว AI จะรวมข้อมูลทั้ง 2 ด้านให้">
+            ＋ สแกนด้านหลังเพิ่ม ({imgs.length} รูป)
+          </button>
+        )}
+        <p className="text-[12px] text-muted">ถ่ายรูปนามบัตรแล้ว AI อ่านข้อมูลกรอกให้จริง — ถ้ามีข้อมูลด้านหลังการ์ด กด &ldquo;สแกนด้านหลังเพิ่ม&rdquo; ได้ <span className="text-[10px] font-bold bg-brand/10 text-brand rounded px-1.5 py-0.5">AI จริง</span></p>
       </div>
       {(state === "done" || state === "adding" || state === "added") && (
         <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 text-[12.5px] bg-white rounded-lg border border-ice p-3">
           <span><strong className="text-navy">ชื่อ:</strong> {[fields.first_name, fields.last_name].filter(Boolean).join(" ") || fields.name_en || "-"}{fields.name_en && [fields.first_name, fields.last_name].filter(Boolean).length > 0 ? ` (${fields.name_en})` : ""}</span>
           <span><strong className="text-navy">ตำแหน่ง:</strong> {fields.position ?? "-"}</span>
-          <span><strong className="text-navy">บริษัท:</strong> {fields.company_name ?? fields.company_en ?? "-"}{fields.company_en && fields.company_name ? ` (${fields.company_en})` : ""}</span>
+          <span><strong className="text-navy">บริษัท:</strong> {fields.company_name ?? fields.company_en ?? "-"}{fields.company_en && fields.company_name ? ` (${fields.company_en})` : ""}{fields.branch ? ` · สาขา: ${fields.branch}` : ""}</span>
           <span><strong className="text-navy">โทร:</strong> {fields.phone ?? "-"}</span>
           <span><strong className="text-navy">อีเมล:</strong> {fields.email ?? "-"}</span>
           {fields.line_id && <span><strong className="text-navy">LINE:</strong> {fields.line_id}</span>}
           {fields.tax_id && <span><strong className="text-navy">Tax ID:</strong> {fields.tax_id}</span>}
           {fields.address && <span className="w-full"><strong className="text-navy">ที่อยู่:</strong> {fields.address}{[fields.subdistrict, fields.district, fields.province, fields.postcode].filter(Boolean).length > 0 && ` · ${[fields.subdistrict, fields.district, fields.province, fields.postcode].filter(Boolean).join(" ")}`}</span>}
+          {fields.other_addresses && <span className="w-full text-muted"><strong className="text-navy">ที่อยู่อื่นๆ:</strong> {fields.other_addresses}</span>}
           {state === "added" ? (
             <span className="ml-auto text-[12px] font-bold text-[#2E9E5B]">{doneMsg}</span>
           ) : (
@@ -196,9 +211,14 @@ async function upsertFromCard(f: Record<string, string | null>, empId?: string):
     postcode: (f.postcode ?? "").trim() || null,
   };
   const cardTaxId = (f.tax_id ?? "").replace(/[^0-9]/g, "") || null; // เก็บเฉพาะตัวเลข 13 หลัก
+  // สาขา + ที่อยู่อื่นๆ (Factory 2 ฯลฯ) จากนามบัตร → เก็บไว้ในโน้ต
+  const noteExtra = [
+    (f.branch ?? "").trim() && `สาขา: ${(f.branch ?? "").trim()}`,
+    (f.other_addresses ?? "").trim() && `ที่อยู่เพิ่มเติม: ${(f.other_addresses ?? "").trim()}`,
+  ].filter(Boolean).join(" | ") || null;
   // เช็คซ้ำ 3 ชั้น: Tax ID (แม่นสุด) > ชื่อ normalize (เทียบทั้งชื่อไทยและอังกฤษ) > ที่อยู่ normalize
-  const { data: allNames } = await supabase.from("customers").select("id,name,name_en,contact_name,address,province,tax_id");
-  const rows = (allNames as { id: number; name: string; name_en: string | null; contact_name: string | null; address: string | null; province: string | null; tax_id: string | null }[]) ?? [];
+  const { data: allNames } = await supabase.from("customers").select("id,name,name_en,contact_name,address,province,tax_id,note");
+  const rows = (allNames as { id: number; name: string; name_en: string | null; contact_name: string | null; address: string | null; province: string | null; tax_id: string | null; note: string | null }[]) ?? [];
   const targets = [normCompany(companyName), companyEn ? normCompany(companyEn) : ""].filter(Boolean);
   const nameHit = (c: { name: string; name_en: string | null }) =>
     targets.includes(normCompany(c.name)) || (c.name_en ? targets.includes(normCompany(c.name_en)) : false);
@@ -217,6 +237,7 @@ async function upsertFromCard(f: Record<string, string | null>, empId?: string):
     if (!existing.address && address) patch.address = address; // เติมที่อยู่จากนามบัตรให้ถ้ายังไม่มี
     if (!existing.province && parts.province) Object.assign(patch, parts);
     if (!existing.tax_id && cardTaxId) patch.tax_id = cardTaxId; // เติม Tax ID จากนามบัตรให้ถ้ายังไม่มี
+    if (!existing.note && noteExtra) patch.note = noteExtra; // เติมสาขา/ที่อยู่เพิ่มเติมให้ถ้ายังไม่มีโน้ต
     // เติมชื่ออีกภาษาให้ถ้ายังไม่มี: ถ้าในระบบเก็บชื่ออังกฤษไว้เป็นชื่อหลัก แล้วนามบัตรมีชื่อไทย → ยกชื่อไทยเป็นชื่อหลัก เก็บอังกฤษไว้ใน name_en
     if (!existing.name_en) {
       const exNorm = normCompany(existing.name);
@@ -229,7 +250,7 @@ async function upsertFromCard(f: Record<string, string | null>, empId?: string):
     const { data: cust, error } = await supabase.from("customers").insert({
       name: companyName, name_en: companyEn && normCompany(companyEn) !== normCompany(companyName) ? companyEn : null,
       contact_name: contactName, phone: f.phone ?? null, email: f.email ?? null, line_id: f.line_id ?? null, address, ...parts,
-      tax_id: cardTaxId, owner: empId || null,
+      tax_id: cardTaxId, owner: empId || null, note: noteExtra,
     }).select("id").single();
     if (error) throw error;
     customerId = cust.id;
