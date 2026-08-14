@@ -165,7 +165,8 @@ function BizCardScan({ onAddLead, addLabel = "＋ เพิ่มเป็น Le
           <span><strong className="text-navy">ชื่อ:</strong> {[fields.first_name, fields.last_name].filter(Boolean).join(" ") || fields.name_en || "-"}{fields.name_en && [fields.first_name, fields.last_name].filter(Boolean).length > 0 ? ` (${fields.name_en})` : ""}</span>
           <span><strong className="text-navy">ตำแหน่ง:</strong> {fields.position ?? "-"}</span>
           <span><strong className="text-navy">บริษัท:</strong> {fields.company_name ?? fields.company_en ?? "-"}{fields.company_en && fields.company_name ? ` (${fields.company_en})` : ""}{fields.branch ? ` · สาขา: ${fields.branch}` : ""}</span>
-          <span><strong className="text-navy">โทร:</strong> {fields.phone ?? "-"}</span>
+          <span><strong className="text-navy">โทรบริษัท:</strong> {fields.phone || fields.mobile || "-"}</span>
+          <span><strong className="text-navy">มือถือ:</strong> {fields.mobile || fields.phone || "-"}</span>
           <span><strong className="text-navy">อีเมล:</strong> {fields.email ?? "-"}</span>
           {fields.line_id && <span><strong className="text-navy">LINE:</strong> {fields.line_id}</span>}
           {fields.tax_id && <span><strong className="text-navy">Tax ID:</strong> {fields.tax_id}</span>}
@@ -211,6 +212,11 @@ async function upsertFromCard(f: Record<string, string | null>, empId?: string):
   const companyName = (f.company_name ?? "").trim() || companyEn || [f.first_name, f.last_name].filter(Boolean).join(" ").trim() || "ลูกค้าใหม่ (จากนามบัตร)";
   const contactEn = (f.name_en ?? "").trim() || null; // ชื่อผู้ติดต่อภาษาอังกฤษ
   const contactName = [f.first_name, f.last_name].filter(Boolean).join(" ").trim() || contactEn;
+  // เบอร์โทร: บริษัทใช้ Tel ก่อน / ผู้ติดต่อใช้มือถือก่อน — ถ้ามีเบอร์เดียวใช้เป็นทั้งคู่
+  const cardTel = (f.phone ?? "").trim() || null;
+  const cardMobile = (f.mobile ?? "").trim() || null;
+  const companyPhone = cardTel || cardMobile;
+  const contactPhone = cardMobile || cardTel;
   const address = (f.address ?? "").trim() || null;
   const parts = {
     subdistrict: (f.subdistrict ?? "").trim() || null,
@@ -224,8 +230,8 @@ async function upsertFromCard(f: Record<string, string | null>, empId?: string):
   const cardBranches = (Array.isArray((f as Record<string, unknown>).branches) ? (f as Record<string, unknown>).branches as CardBranch[] : [])
     .filter((b) => b && ((b.address ?? "").trim() || (b.province ?? "").trim()));
   // เช็คซ้ำ 3 ชั้น: Tax ID (แม่นสุด) > ชื่อ normalize (เทียบทั้งชื่อไทยและอังกฤษ) > ที่อยู่ normalize
-  const { data: allNames } = await supabase.from("customers").select("id,name,name_en,contact_name,address,province,tax_id,note");
-  const rows = (allNames as { id: number; name: string; name_en: string | null; contact_name: string | null; address: string | null; province: string | null; tax_id: string | null; note: string | null }[]) ?? [];
+  const { data: allNames } = await supabase.from("customers").select("id,name,name_en,contact_name,phone,address,province,tax_id,note");
+  const rows = (allNames as { id: number; name: string; name_en: string | null; contact_name: string | null; phone: string | null; address: string | null; province: string | null; tax_id: string | null; note: string | null }[]) ?? [];
   const targets = [normCompany(companyName), companyEn ? normCompany(companyEn) : ""].filter(Boolean);
   const nameHit = (c: { name: string; name_en: string | null }) =>
     targets.includes(normCompany(c.name)) || (c.name_en ? targets.includes(normCompany(c.name_en)) : false);
@@ -240,7 +246,8 @@ async function upsertFromCard(f: Record<string, string | null>, empId?: string):
   if (existing) {
     customerId = existing.id;
     const patch: Record<string, unknown> = {};
-    if (!existing.contact_name && contactName) { patch.contact_name = contactName; patch.phone = f.phone ?? null; patch.email = f.email ?? null; }
+    if (!existing.contact_name && contactName) { patch.contact_name = contactName; patch.email = f.email ?? null; }
+    if (!existing.phone && companyPhone) patch.phone = companyPhone; // เติมเบอร์บริษัทให้ถ้ายังไม่มี
     if (!existing.address && address) patch.address = address; // เติมที่อยู่จากนามบัตรให้ถ้ายังไม่มี
     if (!existing.province && parts.province) Object.assign(patch, parts);
     if (!existing.tax_id && cardTaxId) patch.tax_id = cardTaxId; // เติม Tax ID จากนามบัตรให้ถ้ายังไม่มี
@@ -256,7 +263,7 @@ async function upsertFromCard(f: Record<string, string | null>, empId?: string):
   } else {
     const { data: cust, error } = await supabase.from("customers").insert({
       name: companyName, name_en: companyEn && normCompany(companyEn) !== normCompany(companyName) ? companyEn : null,
-      contact_name: contactName, phone: f.phone ?? null, email: f.email ?? null, line_id: f.line_id ?? null, address, ...parts,
+      contact_name: contactName, phone: companyPhone, email: f.email ?? null, line_id: f.line_id ?? null, address, ...parts,
       tax_id: cardTaxId, owner: empId || null, note: noteExtra,
     }).select("id").single();
     if (error) throw error;
@@ -294,7 +301,7 @@ async function upsertFromCard(f: Record<string, string | null>, empId?: string):
     const dup = ((exContacts as { id: number; name: string; name_en: string | null }[]) ?? [])
       .find((c) => cTargets.includes(normP(c.name)) || (c.name_en ? cTargets.includes(normP(c.name_en)) : false));
     const row = {
-      position: f.position ?? null, phone: f.phone ?? null, email: f.email ?? null, line_id: f.line_id ?? null,
+      position: f.position ?? null, phone: contactPhone, email: f.email ?? null, line_id: f.line_id ?? null,
     };
     const cEn = contactEn && normP(contactEn) !== normP(contactName) ? contactEn : null;
     if (dup) {
