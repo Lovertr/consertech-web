@@ -716,6 +716,9 @@ type DbCustomerFull = {
   tax_id: string | null; map_url: string | null; owner: string | null; interests: string[] | null; created_at: string;
 };
 type DbContact = { id: number; customer_id: number; name: string; name_en: string | null; position: string | null; phone: string | null; email: string | null; line_id: string | null; created_by: string | null };
+type DbQuoteLite = { id: number; doc_no: string; customer_name: string; total: number; status: string; created_at: string };
+type DbCustDoc = { id: number; customer_id: number; doc_type: string; doc_no: string | null; title: string; amount: number | null; doc_date: string | null; file_url: string | null; note: string | null; created_by: string | null; created_at: string };
+const DOC_TYPES = ["ใบสั่งซื้อ (PO)", "สัญญา", "ใบส่งมอบงาน", "ใบแจ้งหนี้ / ใบเสร็จ", "อื่นๆ"];
 
 function CustomersTab() {
   const { access, empId } = useDept();
@@ -741,6 +744,17 @@ function CustomersTab() {
   const [editContactId, setEditContactId] = useState<number | null>(null);
   const [merging, setMerging] = useState(false);
   const [mergeTarget, setMergeTarget] = useState("");
+  // เมนูย่อยในรายละเอียดลูกค้า: ข้อมูล / ประวัติเอกสาร
+  const [detailView, setDetailView] = useState<"info" | "history">("info");
+  const [quotes, setQuotes] = useState<DbQuoteLite[]>([]);
+  const [custDocs, setCustDocs] = useState<DbCustDoc[]>([]);
+  // ฟอร์มเพิ่มเอกสาร (ใบสั่งซื้อ ฯลฯ)
+  const [docType, setDocType] = useState(DOC_TYPES[0]);
+  const [docNo, setDocNo] = useState(""); const [docTitle, setDocTitle] = useState("");
+  const [docAmount, setDocAmount] = useState(""); const [docDate, setDocDate] = useState("");
+  const [docNote, setDocNote] = useState(""); const [docFile, setDocFile] = useState<File | null>(null);
+  const [docSaving, setDocSaving] = useState(false); const [docErr, setDocErr] = useState("");
+  const docFileRef = useRef<HTMLInputElement>(null);
   // สร้างดีลใหม่จากหน้าลูกค้า (prefill บริษัทที่เลือกให้เลย)
   const [dealOpen, setDealOpen] = useState(false);
   const [dSolution, setDSolution] = useState(""); const [dValue, setDValue] = useState("กลาง"); const [dNext, setDNext] = useState("");
@@ -749,12 +763,16 @@ function CustomersTab() {
 
   const load = useCallback(async () => {
     if (!supabase) return;
-    const [c, ct, d, e] = await Promise.all([
+    const [c, ct, d, e, qt, cd] = await Promise.all([
       supabase.from("customers").select("*").order("name"),
       supabase.from("customer_contacts").select("*").order("created_at"),
       supabase.from("deals").select("*").order("created_at", { ascending: false }),
       supabase.from("employees").select("id,name"),
+      supabase.from("quotations").select("id,doc_no,customer_name,total,status,created_at").order("created_at", { ascending: false }),
+      supabase.from("customer_documents").select("*").order("created_at", { ascending: false }),
     ]);
+    setQuotes((qt.data as DbQuoteLite[]) ?? []);
+    setCustDocs((cd.data as DbCustDoc[]) ?? []);
     setEmps((e.data as { id: string; name: string }[]) ?? []);
     const list = (c.data as DbCustomerFull[]) ?? [];
     setCustomers(list);
@@ -779,6 +797,12 @@ function CustomersTab() {
 
   const selContacts = contacts.filter((c) => c.customer_id === selectedId);
   const selDeals = selected ? custDeals.filter((d) => d.customer_id === selected.id || d.customer_name === selected.name) : [];
+  // ใบเสนอราคาของบริษัทนี้ — เทียบชื่อแบบ normalize ทั้งชื่อไทยและอังกฤษ
+  const selQuotes = selected ? quotes.filter((qd) => {
+    const n = normCompany(qd.customer_name);
+    return n === normCompany(selected.name) || (selected.name_en ? n === normCompany(selected.name_en) : false);
+  }) : [];
+  const selDocs = selected ? custDocs.filter((d) => d.customer_id === selected.id) : [];
   const list = customers.filter((c) =>
     (!provFilter || c.province === provFilter) &&
     (!indFilter || c.industry === indFilter) &&
@@ -866,6 +890,40 @@ function CustomersTab() {
     await load();
     setSelectedId(tgt.id);
     setMsg(`✅ รวมแล้ว — ย้ายผู้ติดต่อ ${r.contacts_moved} คน, ดีล ${r.deals_moved} ตัว ไปที่ ${tgt.name}`);
+  };
+
+  const addDoc = async () => {
+    if (!supabase || !selected || !docTitle.trim()) return;
+    setDocSaving(true); setDocErr("");
+    try {
+      let fileUrl: string | null = null;
+      if (docFile) {
+        const path = `customer-docs/${Date.now()}-${docFile.name}`;
+        const { error: upErr } = await supabase.storage.from("attachments").upload(path, docFile, { contentType: docFile.type });
+        if (upErr) throw upErr;
+        fileUrl = supabase.storage.from("attachments").getPublicUrl(path).data.publicUrl;
+      }
+      const { error } = await supabase.from("customer_documents").insert({
+        customer_id: selected.id, doc_type: docType, doc_no: docNo.trim() || null, title: docTitle.trim(),
+        amount: docAmount ? Number(docAmount.replace(/[^0-9.]/g, "")) : null, doc_date: docDate || null,
+        file_url: fileUrl, note: docNote.trim() || null, created_by: empId || null,
+      });
+      if (error) throw error;
+      setDocNo(""); setDocTitle(""); setDocAmount(""); setDocDate(""); setDocNote(""); setDocFile(null);
+      if (docFileRef.current) docFileRef.current.value = "";
+      await load();
+    } catch (e) {
+      setDocErr(String((e as Error).message ?? e));
+    } finally {
+      setDocSaving(false);
+    }
+  };
+
+  const delDoc = async (d: DbCustDoc) => {
+    if (!supabase) return;
+    if (!confirm(`ลบเอกสาร "${d.title}"?`)) return;
+    await supabase.from("customer_documents").delete().eq("id", d.id);
+    load();
   };
 
   const createDealHere = async () => {
@@ -1098,6 +1156,17 @@ function CustomersTab() {
             </div>
           ) : selected ? (
             <>
+              {/* เมนูย่อย: ข้อมูลลูกค้า / ประวัติเอกสาร */}
+              <div className="flex gap-1 bg-ice rounded-xl p-1 w-fit">
+                {([["info", "ข้อมูลลูกค้า"], ["history", `📂 ประวัติ (${selQuotes.length + selDocs.length})`]] as const).map(([k, label]) => (
+                  <button key={k} onClick={() => setDetailView(k)}
+                    className={`px-3.5 py-1.5 rounded-lg text-[12.5px] font-semibold transition ${detailView === k ? "bg-white text-navy shadow-sm" : "text-muted"}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {detailView === "info" ? (
+              <>
               <div className="card-white p-5">
                 <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
                   <div>
@@ -1260,6 +1329,105 @@ function CustomersTab() {
                   {selDeals.length === 0 && <p className="text-[12.5px] text-muted/70">ยังไม่มีดีลกับบริษัทนี้ — สร้างได้ที่แท็บ Pipeline ดีล</p>}
                 </div>
               </div>
+              </>
+              ) : (
+              <>
+              {/* ประวัติใบเสนอราคา */}
+              <div className="card-white p-5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-bold text-navy text-[14.5px]">📄 ใบเสนอราคา <span className="text-sky text-[12px]">({selQuotes.length})</span></p>
+                  <Link href="/staff/documents" className="text-[12px] font-semibold text-sky hover:text-brand">เปิดหน้าเอกสารขาย →</Link>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {selQuotes.map((qt) => (
+                    <div key={qt.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-ice p-3 text-[12.5px]">
+                      <span className="font-bold text-sky">{qt.doc_no}</span>
+                      <span className="text-muted/80 text-[11.5px]">{fmtD(qt.created_at)}</span>
+                      <span className="ml-auto font-bold text-navy">฿{Number(qt.total).toLocaleString("th-TH", { minimumFractionDigits: 2 })}</span>
+                      <span className={`text-[10.5px] font-bold rounded px-1.5 py-0.5 ${
+                        qt.status.includes("อนุมัติ") && !qt.status.includes("รอ") ? "bg-[#2E9E5B]/15 text-[#2E9E5B]" : qt.status.includes("ยกเลิก") || qt.status.includes("ปฏิเสธ") ? "bg-[#D94141]/10 text-[#D94141]" : "bg-amber/15 text-amber"
+                      }`}>{qt.status}</span>
+                    </div>
+                  ))}
+                  {selQuotes.length === 0 && <p className="text-[12.5px] text-muted/70">ยังไม่มีใบเสนอราคากับบริษัทนี้ — สร้างได้ที่หน้า เอกสารขาย</p>}
+                </div>
+              </div>
+
+              {/* ใบสั่งซื้อ + เอกสารอื่นๆ */}
+              <div className="card-white p-5">
+                <p className="font-bold text-navy text-[14.5px]">🗂 ใบสั่งซื้อ & เอกสารอื่นๆ <span className="text-sky text-[12px]">({selDocs.length})</span></p>
+                <div className="mt-3 space-y-2">
+                  {selDocs.map((d) => (
+                    <div key={d.id} className="rounded-xl border border-ice p-3 text-[12.5px]">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`text-[10.5px] font-bold rounded px-1.5 py-0.5 ${d.doc_type.includes("PO") ? "bg-brand/10 text-brand" : "bg-ice text-sky"}`}>{d.doc_type}</span>
+                        {d.doc_no && <span className="font-bold text-sky">{d.doc_no}</span>}
+                        <span className="font-bold text-navy flex-1 min-w-[120px]">{d.title}</span>
+                        {d.amount !== null && <span className="font-bold text-navy">฿{Number(d.amount).toLocaleString("th-TH", { minimumFractionDigits: 2 })}</span>}
+                        {!readOnly && (
+                          <button onClick={() => delDoc(d)} title="ลบเอกสาร"
+                            className="text-[11px] font-bold bg-ice text-muted rounded px-1.5 py-0.5 hover:bg-[#D94141]/10 hover:text-[#D94141]">🗑</button>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-muted/80 mt-1">
+                        {[d.doc_date && `📅 ${new Date(d.doc_date).toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "numeric" })}`, d.note, d.created_by && `เพิ่มโดย ${empName(d.created_by)}`].filter(Boolean).join(" · ")}
+                        {d.file_url && <a href={d.file_url} target="_blank" rel="noreferrer" className="ml-2 font-bold text-brand hover:underline">📎 เปิดไฟล์แนบ</a>}
+                      </p>
+                    </div>
+                  ))}
+                  {selDocs.length === 0 && <p className="text-[12.5px] text-muted/70">ยังไม่มีเอกสาร — เพิ่มใบสั่งซื้อ สัญญา หรือเอกสารอื่นๆ ด้านล่าง</p>}
+                </div>
+                {!readOnly && (
+                  <div className="mt-4 rounded-xl border border-dashed border-sky/50 bg-ice/20 p-3.5">
+                    <p className="text-[12.5px] font-bold text-navy mb-2">＋ เพิ่มเอกสาร (แนบไฟล์สแกน/รูปถ่ายได้)</p>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div>
+                        <label className="text-[11px] font-bold text-muted">ประเภทเอกสาร</label>
+                        <select value={docType} onChange={(e) => setDocType(e.target.value)} className="mt-1 w-full rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px] bg-white">
+                          {DOC_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-bold text-muted">เลขที่เอกสาร</label>
+                        <input value={docNo} onChange={(e) => setDocNo(e.target.value)} placeholder="เช่น PO-2026-001"
+                          className="mt-1 w-full rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px]" />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="text-[11px] font-bold text-muted">ชื่อเอกสาร *</label>
+                        <input value={docTitle} onChange={(e) => setDocTitle(e.target.value)} placeholder="เช่น ใบสั่งซื้อ AGV Lifter x2"
+                          className="mt-1 w-full rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px]" />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-bold text-muted">จำนวนเงิน (บาท)</label>
+                        <input value={docAmount} onChange={(e) => setDocAmount(e.target.value)} placeholder="เช่น 1500000" inputMode="decimal"
+                          className="mt-1 w-full rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px]" />
+                      </div>
+                      <div>
+                        <label className="text-[11px] font-bold text-muted">วันที่เอกสาร</label>
+                        <input type="date" value={docDate} onChange={(e) => setDocDate(e.target.value)}
+                          className="mt-1 w-full rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px] bg-white" />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="text-[11px] font-bold text-muted">ไฟล์แนบ (PDF/รูป)</label>
+                        <input ref={docFileRef} type="file" accept="image/*,.pdf" onChange={(e) => setDocFile(e.target.files?.[0] ?? null)}
+                          className="mt-1 w-full text-[12px] file:mr-2 file:rounded-lg file:border-0 file:bg-ice file:px-3 file:py-1.5 file:text-[12px] file:font-semibold file:text-navy" />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="text-[11px] font-bold text-muted">โน้ต</label>
+                        <input value={docNote} onChange={(e) => setDocNote(e.target.value)} placeholder="รายละเอียดเพิ่มเติม"
+                          className="mt-1 w-full rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px]" />
+                      </div>
+                    </div>
+                    {docErr && <p className="mt-2 text-[12px] text-[#D94141]">⚠ {docErr}</p>}
+                    <button onClick={addDoc} disabled={docSaving || !docTitle.trim()}
+                      className="mt-2.5 btn btn-primary text-[12.5px] py-1.5 px-3.5 disabled:opacity-50">
+                      {docSaving ? "กำลังบันทึก..." : "บันทึกเอกสาร"}
+                    </button>
+                  </div>
+                )}
+              </div>
+              </>
+              )}
             </>
           ) : (
             <p className="card-white p-8 text-center text-[13px] text-muted/70">เลือกลูกค้าจากรายชื่อด้านซ้าย</p>
