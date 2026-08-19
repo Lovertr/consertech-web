@@ -15,11 +15,11 @@ const sarabun = Sarabun({
 
 export const metadata: Metadata = {
   title: {
-    default: "CONSERTECH — Intra-Logistic Automation & LiDAR-Guided AGV",
+    default: "CONSERTECH — Industrial Automation: Consult · Service · Technology",
     template: "%s | CONSERTECH",
   },
   description:
-    "บริษัท คันเซอร์เทคช์ จำกัด — ที่ปรึกษาและวิศวกรระบบ Intra-Logistic Automation ของคนไทย โซลูชัน LiDAR-Guided AGV และ Fleet Management System",
+    "บริษัท คันเซอร์เทคช์ จำกัด — ที่ปรึกษาและผู้ให้บริการระบบอัตโนมัติอุตสาหกรรมครบวงจร: คลังสินค้า สายการผลิต AGV/AMR ตรวจสอบด้วย AI และความปลอดภัยเครื่องจักร",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

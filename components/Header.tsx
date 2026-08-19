@@ -12,6 +12,7 @@ const links = [
   { href: "/vehicles", key: "nav.vehicles" },
   { href: "/fleet-management", key: "nav.fms" },
   { href: "/blog", key: "nav.blog" },
+  { href: "/downloads", key: "nav.downloads" },
   { href: "/about", key: "nav.about" },
   { href: "/academy", key: "nav.academy" },
 ] as const;

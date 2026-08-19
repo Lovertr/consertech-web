@@ -16,11 +16,12 @@ const dict = {
     "nav.blog": "บทความ",
     "nav.about": "เกี่ยวกับเรา",
     "nav.academy": "Academy",
+    "nav.downloads": "ดาวน์โหลด",
     "cta.survey": "นัดสำรวจหน้างานฟรี",
-    "hero.pre": "ยกระดับโรงงานของคุณสู่",
-    "hero.title": "Intra-Logistic Automation",
+    "hero.pre": "ที่ปรึกษาและผู้ให้บริการด้าน",
+    "hero.title": "Industrial Automation",
     "hero.sub":
-      "โซลูชัน LiDAR-Guided AGV และ Fleet Management System ออกแบบโดยทีมวิศวกรไทย ติดตั้งจริง ใช้งานได้จริง",
+      "ปรึกษา ออกแบบ ติดตั้ง และดูแลระบบอัตโนมัติในโรงงานครบวงจร — ตั้งแต่คลังสินค้า สายการผลิต AGV/AMR ระบบตรวจสอบด้วย AI ไปจนถึงความปลอดภัยเครื่องจักร โดยทีมวิศวกรไทย",
     "hero.cta2": "ดูโซลูชันทั้งหมด",
   },
   en: {
@@ -31,11 +32,12 @@ const dict = {
     "nav.blog": "Blog",
     "nav.about": "About Us",
     "nav.academy": "Academy",
+    "nav.downloads": "Downloads",
     "cta.survey": "Book a Free Site Survey",
-    "hero.pre": "Upgrade your factory with",
-    "hero.title": "Intra-Logistic Automation",
+    "hero.pre": "Your consultant and service partner for",
+    "hero.title": "Industrial Automation",
     "hero.sub":
-      "LiDAR-Guided AGV and Fleet Management System solutions — engineered, installed, and supported by our Thai team.",
+      "Consult, design, install and maintain end-to-end factory automation — warehouse, production lines, AGV/AMR, AI vision inspection and machine safety — by our Thai engineering team.",
     "hero.cta2": "Explore Solutions",
   },
 } as const;

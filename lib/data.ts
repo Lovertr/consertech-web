@@ -6,16 +6,112 @@ export const company = {
   nameTh: "บริษัท คันเซอร์เทคช์ จำกัด",
   nameEn: "CONSERTECH CO., LTD.",
   tagline: "Consult · Service · Technology",
-  address: "72, 49 หมู่ที่ 3 ถ.เลี่ยงเมืองปากเกร็ด ต.บางตลาด อ.ปากเกร็ด จ.นนทบุรี 11120",
-  addressEn: "72, 49 Moo 3, Liang Mueang Pak Kret Rd., Bang Talat, Pak Kret, Nonthaburi 11120, Thailand",
-  phone: "062-363-5395",
-  email: "sale01@cs-th.com",
+  taglineTh: "ปรึกษา · บริการ · เทคโนโลยี",
+  address: "41/69 หมู่ 6 ต.บางตลาด อ.ปากเกร็ด จ.นนทบุรี 11120",
+  addressEn: "41/69 Moo 6, Bang Talat, Pak Kret, Nonthaburi 11120, Thailand",
+  phone: "02 494 9191, 063 042 4914",
+  phones: ["02 494 9191", "063 042 4914"],
+  email: "info@cs-th.com",
+  website: "www.cs-th.com",
   mapsUrl: "https://maps.app.goo.gl/cDg9snyMGovX2cwG7",
   mapsEmbed:
     "https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d684.6746560223728!2d100.5162158137758!3d13.892685074198672!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x30e285006e2f5a67%3A0xfe7607aaf5b28e09!2sCONSERTECH%20CO.%2CLTD!5e0!3m2!1sth!2sth!4v1785904600878!5m2!1sth!2sth",
   vision:
     "ขับเคลื่อนความสำเร็จของคุณผ่านคำปรึกษาและบริการวิศวกรรม เพื่อยกระดับการทำงานสู่ระบบอัตโนมัติที่ล้ำสมัยและยั่งยืน",
 };
+
+// ── เนื้อหาจาก Company Profile v5 ──
+// Strategic Focus: 3 เสาหลัก
+export const strategicFocus = [
+  {
+    key: "consult", en: "CONSULTANT", th: "ที่ปรึกษา", icon: "💡",
+    items: [
+      { en: "Engineering advisory", th: "คำแนะนำด้านวิศวกรรม" },
+      { en: "Problem-solving", th: "การวิเคราะห์และแก้ไขปัญหา" },
+      { en: "Strategic Advisory", th: "คำแนะนำเชิงยุทธศาสตร์" },
+    ],
+  },
+  {
+    key: "service", en: "SERVICE", th: "การบริการ", icon: "🛠️", highlight: true,
+    items: [
+      { en: "Technical solutions", th: "โซลูชันทางเทคนิค" },
+      { en: "System integration", th: "การเชื่อมโยงบูรณาการระบบ" },
+      { en: "Installation & commissioning", th: "การติดตั้งและการทดสอบระบบ" },
+      { en: "System optimization", th: "การปรับปรุงระบบให้มีประสิทธิภาพสูงสุด" },
+      { en: "Machine safety", th: "การบริการตรวจสอบระบบความปลอดภัยเครื่องจักร" },
+      { en: "Maintenance & upgrade", th: "การบำรุงรักษาและปรับปรุงระบบ" },
+    ],
+  },
+  {
+    key: "technology", en: "TECHNOLOGY & INNOVATION", th: "เทคโนโลยีและนวัตกรรม", icon: "🚀",
+    items: [
+      { en: "AI & Machine Learning", th: "ปัญญาประดิษฐ์และการเรียนรู้ของเครื่อง" },
+      { en: "Advanced Automation & Robotics", th: "ระบบอัตโนมัติและหุ่นยนต์ขั้นสูง" },
+      { en: "Industrial Connectivity", th: "การเชื่อมต่อระบบอุตสาหกรรม" },
+      { en: "Data Analytics & Intelligence", th: "การวิเคราะห์ข้อมูลและการใช้ข้อมูลเชิงอัจฉริยะ" },
+      { en: "Cloud & Edge Computing", th: "การประมวลผลบนคลาวด์และเอดจ์" },
+    ],
+  },
+];
+
+// Industrial Systems and Technology: 6 การ์ด
+export const industrialSystems = [
+  { en: "WAREHOUSE AUTOMATION (ASRS)", th: "ระบบคลังสินค้าอัตโนมัติ", icon: "🏭", href: "/solution#warehouse" },
+  { en: "ROBOTIC ASSEMBLY LINE", th: "สายการประกอบด้วยหุ่นยนต์", icon: "🦾", href: "/solution#production" },
+  { en: "AMR ROBOTS & CONVEYORS", th: "หุ่นยนต์ AMR และสายพานลำเลียง", icon: "🤖", href: "/solution#intralogistic" },
+  { en: "AI VISION INSPECTION", th: "การตรวจจับและตรวจสอบด้วยระบบ AI Vision", icon: "👁️", href: "/solution#quality" },
+  { en: "FACILITY MONITORING DASHBOARD", th: "แดชบอร์ดมอนิเตอร์และติดตามสถานะโรงงาน", icon: "📊", href: "/solution#facility" },
+  { en: "MACHINE SAFETY SYSTEMS", th: "ระบบความปลอดภัยของเครื่องจักร", icon: "🛡️", href: "/solution#safety" },
+];
+
+// Industry 4.0: 6 หมวดโซลูชัน (วงล้อในโปรไฟล์)
+export const industry40 = [
+  {
+    id: "facility", en: "FACILITY AND MAINTENANCE AUTOMATION", th: "ระบบอัตโนมัติสำหรับอาคารสถานที่และการบำรุงรักษา", icon: "🏢", color: "#1E4F8A",
+    items: [
+      { en: "SMART UTILITIES SYSTEM", th: "ระบบสาธารณูปโภคอัจฉริยะ (ไฟฟ้า น้ำ แก๊ส ฯลฯ)" },
+      { en: "CONDITION MONITORING SYSTEM", th: "ระบบเฝ้าระวังและตรวจติดตามสภาวะการทำงานของเครื่องจักร" },
+    ],
+  },
+  {
+    id: "quality", en: "QUALITY ASSURANCE AUTOMATION", th: "ระบบอัตโนมัติสำหรับการประกันคุณภาพ", icon: "✅", color: "#12B5C9",
+    items: [
+      { en: "QUALITY CHECKED INSPECTION", th: "การตรวจสอบและควบคุมคุณภาพ" },
+      { en: "AI DEFECT INSPECTION", th: "การตรวจสอบรอยตำหนิ/ความผิดพลาดด้วยระบบ AI" },
+    ],
+  },
+  {
+    id: "production", en: "PRODUCTION AUTOMATION", th: "ระบบอัตโนมัติในกระบวนการผลิต", icon: "⚙️", color: "#1B63B7",
+    items: [
+      { en: "MATERIAL HANDLING AUTOMATION", th: "ระบบขนถ่ายและจัดการวัสดุอัตโนมัติ" },
+      { en: "PACKING AUTOMATION", th: "ระบบบรรจุภัณฑ์อัตโนมัติ" },
+      { en: "PROCESS AUTOMATION", th: "ระบบอัตโนมัติในกระบวนการผลิต" },
+      { en: "ASSEMBLY AUTOMATION", th: "ระบบประกอบชิ้นส่วนอัตโนมัติ" },
+    ],
+  },
+  {
+    id: "intralogistic", en: "INTRA-LOGISTIC AUTOMATION", th: "ระบบอัตโนมัติสำหรับโลจิสติกส์ภายใน", icon: "🚚", color: "#2A8BD8", highlight: true,
+    items: [
+      { en: "AMR / AGV", th: "หุ่นยนต์เคลื่อนที่อัตโนมัติ (AMR) / รถลำเลียงสินค้าอัตโนมัติ (AGV)" },
+      { en: "SMART CONVEYOR SYSTEM", th: "ระบบสายพานลำเลียงอัจฉริยะ" },
+    ],
+  },
+  {
+    id: "warehouse", en: "WAREHOUSE AUTOMATION", th: "ระบบอัตโนมัติในคลังสินค้า", icon: "📦", color: "#3F8FE0",
+    items: [
+      { en: "SMART INVENTORY TRACKING", th: "ระบบติดตามสินค้าคงคลังอัจฉริยะ" },
+      { en: "AUTOMATED SORTING SYSTEM", th: "ระบบคัดแยกอัตโนมัติ" },
+      { en: "USER'S SMART PICKING", th: "ระบบเบิก/หยิบสินค้าอัจฉริยะสำหรับผู้ใช้งาน" },
+      { en: "ASRS (Automated Storage and Retrieval System)", th: "ระบบจัดเก็บและค้นคืนสินค้าอัตโนมัติ" },
+    ],
+  },
+  {
+    id: "safety", en: "MACHINE SAFETY", th: "ความปลอดภัยของเครื่องจักร", icon: "🛡️", color: "#5FA8E8",
+    items: [
+      { en: "MACHINE SAFETY SYSTEM", th: "ระบบความปลอดภัยของเครื่องจักร" },
+    ],
+  },
+];
 
 export const painPoints = [
   {

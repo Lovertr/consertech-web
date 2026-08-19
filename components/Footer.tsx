@@ -1,32 +1,35 @@
 import Link from "next/link";
-import { company } from "@/lib/data";
+import { company, industry40 } from "@/lib/data";
 
 export default function Footer() {
   return (
     <footer className="bg-navy text-white mt-auto">
-      <div className="container-site py-12 grid gap-10 md:grid-cols-3">
+      <div className="container-site py-12 grid gap-10 md:grid-cols-[1.2fr_1fr_1fr]">
         <div>
           <div className="bg-white rounded-xl px-4 py-3 inline-block">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/logo-consertech.png" alt="CONSERTECH" width={160} />
           </div>
-          <p className="mt-4 text-sm text-[#CADCFC] max-w-[36ch]">
-            {company.nameTh} — {company.tagline}
+          <p className="mt-4 text-[14px] font-bold text-white tracking-wide">CONSULT • SERVICE • TECHNOLOGY</p>
+          <p className="text-[13px] text-[#BFD6E9]">{company.taglineTh}</p>
+          <p className="mt-3 text-sm text-[#CADCFC] max-w-[40ch] leading-relaxed">
+            {company.nameTh} — ที่ปรึกษาและผู้ให้บริการระบบอัตโนมัติอุตสาหกรรมครบวงจร
           </p>
         </div>
         <div className="text-sm space-y-2 text-[#CADCFC]">
           <p className="font-bold text-white text-base">ติดต่อเรา</p>
-          <p>{company.address}</p>
-          <p>โทร {company.phone}</p>
-          <p>{company.email}</p>
+          <p className="flex gap-2"><span>🏠</span><span>{company.address}</span></p>
+          <p className="flex gap-2"><span>📞</span><span>{company.phone}</span></p>
+          <p className="flex gap-2"><span>✉️</span><a href={`mailto:${company.email}`} className="hover:text-white">{company.email}</a></p>
+          <p className="flex gap-2"><span>🌐</span><span>{company.website}</span></p>
         </div>
         <div className="text-sm space-y-2">
-          <p className="font-bold text-white text-base">ลิงก์</p>
-          <p><Link href="/solution" className="text-[#CADCFC] hover:text-white">โซลูชัน LiDAR-Guided AGV</Link></p>
-          <p><Link href="/vehicles" className="text-[#CADCFC] hover:text-white">รถ AGV 5 รูปแบบ</Link></p>
-          <p><Link href="/blog" className="text-[#CADCFC] hover:text-white">บทความ</Link></p>
+          <p className="font-bold text-white text-base">โซลูชัน</p>
+          {industry40.map((g) => (
+            <p key={g.id}><Link href={`/solution#${g.id}`} className="text-[#CADCFC] hover:text-white">{g.en}</Link></p>
+          ))}
+          <p className="pt-2"><Link href="/downloads" className="text-[#CADCFC] hover:text-white">📥 ดาวน์โหลดเอกสาร</Link></p>
           <p><Link href="/academy" className="text-[#CADCFC] hover:text-white">CONSERTECH Academy</Link></p>
-          {/* Staff Login ไว้ที่ footer ตามข้อเสนอ (Known gap #5) — ย้ายได้ถ้า CEO ต้องการ */}
           <p><Link href="/staff" className="text-[#7FA8C9] hover:text-white">Staff Login</Link></p>
         </div>
       </div>

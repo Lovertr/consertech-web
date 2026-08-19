@@ -9,7 +9,7 @@ import { agvModels, docTemplates, knowledgeBase } from "@/lib/staffData";
 import { supabase } from "@/lib/supabase";
 
 const fmt = (n: number) => n.toLocaleString("th-TH");
-const tabs = ["สินค้า/อุปกรณ์", "คลังสินค้า", "รุ่นรถ AGV", "Template เอกสาร", "ฐานความรู้"] as const;
+const tabs = ["สินค้า/อุปกรณ์", "คลังสินค้า", "ไฟล์ดาวน์โหลด (เว็บ)", "รุ่นรถ AGV", "Template เอกสาร", "ฐานความรู้"] as const;
 
 export type DbProduct = {
   id: number; code: string; name: string; description: string | null;
@@ -477,6 +477,242 @@ function InventoryTab({ products, empId, empNames, readOnly, reload }: {
   );
 }
 
+// ── แท็บไฟล์ดาวน์โหลดสำหรับเว็บสาธารณะ (/downloads) — แอดมินอัปโหลด/แก้/ลบ/ซ่อน/จัดลำดับ ──
+type DbDownload = {
+  id: number; title: string; title_en: string | null; category: string; description: string | null;
+  file_url: string; file_name: string | null; file_size: number | null; cover_url: string | null;
+  sort: number; is_public: boolean; download_count: number; created_by: string | null; created_at: string;
+};
+const DL_CATEGORIES = ["Company Profile", "Catalog", "Brochure", "Datasheet", "อื่นๆ"];
+
+function DownloadsTab({ empId, readOnly }: { empId: string; readOnly: boolean }) {
+  const [rows, setRows] = useState<DbDownload[]>([]);
+  const [editing, setEditing] = useState<DbDownload | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [f, setF] = useState({ title: "", title_en: "", category: "Company Profile", description: "", sort: 0, is_public: true });
+  const [fileUrl, setFileUrl] = useState(""); const [fileName, setFileName] = useState(""); const [fileSize, setFileSize] = useState<number | null>(null);
+  const [coverUrl, setCoverUrl] = useState("");
+  const [busy, setBusy] = useState(false); const [err, setErr] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null); const coverRef = useRef<HTMLInputElement>(null);
+
+  const load = useCallback(async () => {
+    if (!supabase) return;
+    const { data } = await supabase.from("downloads").select("*").order("sort").order("created_at", { ascending: false });
+    setRows((data as DbDownload[]) ?? []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const resetForm = () => { setF({ title: "", title_en: "", category: "Company Profile", description: "", sort: 0, is_public: true }); setFileUrl(""); setFileName(""); setFileSize(null); setCoverUrl(""); setErr(""); };
+  const openNew = () => { resetForm(); setEditing(null); setAdding(true); };
+  const openEdit = (d: DbDownload) => {
+    setF({ title: d.title, title_en: d.title_en ?? "", category: d.category, description: d.description ?? "", sort: d.sort, is_public: d.is_public });
+    setFileUrl(d.file_url); setFileName(d.file_name ?? ""); setFileSize(d.file_size); setCoverUrl(d.cover_url ?? ""); setErr("");
+    setEditing(d); setAdding(true);
+  };
+
+  const uploadTo = async (file: File, folder: string) => {
+    if (!supabase) throw new Error("no db");
+    const safe = file.name.replace(/[^A-Za-z0-9._-]+/g, "_");
+    const path = `${folder}/${Date.now()}-${safe}`;
+    const { error } = await supabase.storage.from("attachments").upload(path, file, { contentType: file.type || undefined, upsert: false });
+    if (error) throw error;
+    return supabase.storage.from("attachments").getPublicUrl(path).data.publicUrl;
+  };
+  const pickFile = async (file: File) => {
+    setBusy(true); setErr("");
+    try { setFileUrl(await uploadTo(file, "downloads")); setFileName(file.name); setFileSize(file.size); if (!f.title) setF({ ...f, title: file.name.replace(/\.[^.]+$/, "") }); }
+    catch (e) { setErr("อัปโหลดไฟล์ไม่สำเร็จ: " + String((e as Error).message ?? e)); }
+    finally { setBusy(false); }
+  };
+  const pickCover = async (file: File) => {
+    setBusy(true); setErr("");
+    try { setCoverUrl(await uploadTo(file, "downloads/covers")); }
+    catch (e) { setErr("อัปโหลดรูปปกไม่สำเร็จ: " + String((e as Error).message ?? e)); }
+    finally { setBusy(false); }
+  };
+
+  const save = async () => {
+    if (!supabase) return;
+    if (!f.title.trim() || !fileUrl) { setErr("กรุณาใส่ชื่อเอกสารและอัปโหลดไฟล์"); return; }
+    setBusy(true); setErr("");
+    const row = {
+      title: f.title.trim(), title_en: f.title_en.trim() || null, category: f.category, description: f.description.trim() || null,
+      file_url: fileUrl, file_name: fileName || null, file_size: fileSize, cover_url: coverUrl || null, sort: f.sort, is_public: f.is_public,
+      updated_at: new Date().toISOString(),
+    };
+    const r = editing
+      ? await supabase.from("downloads").update(row).eq("id", editing.id)
+      : await supabase.from("downloads").insert({ ...row, created_by: empId || null });
+    setBusy(false);
+    if (r.error) { setErr(r.error.message); return; }
+    setAdding(false); setEditing(null); load();
+  };
+
+  const remove = async (d: DbDownload) => {
+    if (!supabase) return;
+    if (!confirm(`ลบ "${d.title}" ออกจากหน้าดาวน์โหลด?`)) return;
+    await supabase.from("downloads").delete().eq("id", d.id);
+    load();
+  };
+  const togglePublic = async (d: DbDownload) => {
+    if (!supabase) return;
+    await supabase.from("downloads").update({ is_public: !d.is_public }).eq("id", d.id);
+    load();
+  };
+  const move = async (d: DbDownload, dir: -1 | 1) => {
+    if (!supabase) return;
+    const same = rows.filter((x) => x.category === d.category);
+    const i = same.findIndex((x) => x.id === d.id);
+    const j = i + dir;
+    if (j < 0 || j >= same.length) return;
+    const a = same[i], b = same[j];
+    // สลับค่า sort (ถ้าเท่ากันให้กำหนดใหม่ตามลำดับ)
+    const sa = a.sort === b.sort ? (dir < 0 ? b.sort - 1 : b.sort + 1) : b.sort;
+    const sb = a.sort === b.sort ? a.sort : a.sort;
+    await Promise.all([
+      supabase.from("downloads").update({ sort: sa }).eq("id", a.id),
+      supabase.from("downloads").update({ sort: sb }).eq("id", b.id),
+    ]);
+    load();
+  };
+
+  const fmtSize = (n: number | null) => !n ? "-" : n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`;
+
+  return (
+    <>
+      {adding && !readOnly && (
+        <div className="card-white p-5 mb-4 border-2 border-brand/30">
+          <p className="font-bold text-navy text-[15px]">{editing ? "✎ แก้ไขไฟล์ดาวน์โหลด" : "＋ เพิ่มไฟล์ดาวน์โหลดใหม่"}</p>
+          <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
+            <div className="sm:col-span-2 grid gap-2 sm:grid-cols-[1fr_auto] items-end">
+              <div>
+                <label className="text-[11.5px] font-bold text-muted">ไฟล์ * (PDF / Excel / Word / รูป — สูงสุด ~50MB)</label>
+                <input ref={fileRef} type="file" onChange={(e) => { const x = e.target.files?.[0]; if (x) pickFile(x); e.target.value = ""; }}
+                  className="mt-1 w-full text-[12.5px] file:mr-2 file:rounded-lg file:border-0 file:bg-ice file:px-3 file:py-2 file:text-[12.5px] file:font-semibold file:text-navy" />
+              </div>
+              {fileUrl && <a href={fileUrl} target="_blank" rel="noreferrer" className="text-[12px] font-semibold text-[#2E9E5B]">✓ {fileName || "ไฟล์แนบแล้ว"} ({fmtSize(fileSize)}) — เปิดดู</a>}
+            </div>
+            <div>
+              <label className="text-[11.5px] font-bold text-muted">ชื่อเอกสาร (ไทย) *</label>
+              <input value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} placeholder="เช่น Company Profile CONSERTECH 2026"
+                className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
+            </div>
+            <div>
+              <label className="text-[11.5px] font-bold text-muted">ชื่อเอกสาร (อังกฤษ)</label>
+              <input value={f.title_en} onChange={(e) => setF({ ...f, title_en: e.target.value })}
+                className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
+            </div>
+            <div>
+              <label className="text-[11.5px] font-bold text-muted">หมวด</label>
+              <select value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px] bg-white">
+                {DL_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div className="flex gap-2.5">
+              <div className="flex-1">
+                <label className="text-[11.5px] font-bold text-muted">ลำดับ (น้อยขึ้นก่อน)</label>
+                <input type="number" value={f.sort} onChange={(e) => setF({ ...f, sort: +e.target.value || 0 })} className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
+              </div>
+              <div className="flex-1">
+                <label className="text-[11.5px] font-bold text-muted">สถานะ</label>
+                <select value={f.is_public ? "1" : "0"} onChange={(e) => setF({ ...f, is_public: e.target.value === "1" })} className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px] bg-white">
+                  <option value="1">แสดงบนเว็บ</option><option value="0">ซ่อน (ร่าง)</option>
+                </select>
+              </div>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="text-[11.5px] font-bold text-muted">คำอธิบายสั้นๆ (แสดงใต้ชื่อบนเว็บ)</label>
+              <textarea value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} rows={2}
+                className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
+            </div>
+            <div className="sm:col-span-2 flex flex-wrap items-center gap-3">
+              <div>
+                <label className="text-[11.5px] font-bold text-muted">รูปปก (ไม่บังคับ — แนะนำ 16:9)</label>
+                <input ref={coverRef} type="file" accept="image/*" onChange={(e) => { const x = e.target.files?.[0]; if (x) pickCover(x); e.target.value = ""; }}
+                  className="mt-1 block text-[12.5px] file:mr-2 file:rounded-lg file:border-0 file:bg-ice file:px-3 file:py-1.5 file:text-[12px] file:font-semibold file:text-navy" />
+              </div>
+              {coverUrl && (
+                <div className="flex items-center gap-2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={coverUrl} alt="" className="h-14 rounded-lg border border-ice object-cover" />
+                  <button onClick={() => setCoverUrl("")} className="text-[11.5px] text-muted hover:text-[#D94141]">ลบรูปปก</button>
+                </div>
+              )}
+            </div>
+          </div>
+          {err && <p className="mt-2 text-[12.5px] text-[#D94141] bg-[#D94141]/10 rounded-lg px-3 py-2">⚠ {err}</p>}
+          <div className="mt-3 flex gap-2">
+            <button onClick={save} disabled={busy} className="btn btn-primary text-[13px] py-2 px-4 disabled:opacity-50">{busy ? "⏳ กำลังอัปโหลด/บันทึก..." : "บันทึก"}</button>
+            <button onClick={() => { setAdding(false); setEditing(null); }} className="btn btn-outline text-[13px] py-2 px-4">ยกเลิก</button>
+          </div>
+        </div>
+      )}
+
+      <div className="card-white overflow-hidden">
+        <div className="flex flex-wrap justify-between items-center gap-2 px-5 pt-4 pb-3">
+          <div>
+            <p className="font-bold text-navy">ไฟล์ดาวน์โหลดบนเว็บ <span className="text-sky text-[13px]">({rows.length})</span></p>
+            <p className="text-[11.5px] text-muted">แสดงที่หน้า <a href="/downloads" target="_blank" className="text-brand font-semibold hover:underline">/downloads</a> — ลูกค้าดาวน์โหลดได้ไม่ต้องล็อกอิน</p>
+          </div>
+          {!readOnly && !adding && <button onClick={openNew} className="btn btn-primary text-[12.5px] py-1.5 px-3">＋ เพิ่มไฟล์</button>}
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[820px] text-[13px]">
+            <thead>
+              <tr className="bg-ice/70 text-navy">
+                <th className="text-left px-4 py-2.5 font-bold w-16">ปก</th>
+                <th className="text-left px-3 py-2.5 font-bold">เอกสาร</th>
+                <th className="text-left px-3 py-2.5 font-bold">หมวด</th>
+                <th className="text-right px-3 py-2.5 font-bold">ขนาด</th>
+                <th className="text-right px-3 py-2.5 font-bold">ดาวน์โหลด</th>
+                <th className="text-center px-3 py-2.5 font-bold">สถานะ</th>
+                {!readOnly && <th className="px-3 py-2.5 text-right">จัดการ</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((d, i) => (
+                <tr key={d.id} className={i % 2 ? "bg-ice/30" : ""}>
+                  <td className="px-4 py-2">
+                    {d.cover_url
+                      // eslint-disable-next-line @next/next/no-img-element
+                      ? <img src={d.cover_url} alt="" className="w-12 h-8 rounded object-cover border border-ice" />
+                      : <div className="w-12 h-8 rounded bg-ice/70 flex items-center justify-center text-[14px]">📄</div>}
+                  </td>
+                  <td className="px-3 py-2">
+                    <p className="font-semibold text-navy leading-snug">{d.title}</p>
+                    {d.title_en && <p className="text-[11.5px] text-sky">{d.title_en}</p>}
+                    <a href={d.file_url} target="_blank" rel="noreferrer" className="text-[11px] text-muted/80 hover:text-brand">{d.file_name ?? "เปิดไฟล์"}</a>
+                  </td>
+                  <td className="px-3 py-2 text-muted whitespace-nowrap">{d.category}</td>
+                  <td className="px-3 py-2 text-right text-muted whitespace-nowrap">{fmtSize(d.file_size)}</td>
+                  <td className="px-3 py-2 text-right font-semibold text-navy">{d.download_count}</td>
+                  <td className="px-3 py-2 text-center">
+                    <button onClick={() => !readOnly && togglePublic(d)} disabled={readOnly}
+                      className={`text-[10.5px] font-bold rounded px-1.5 py-0.5 ${d.is_public ? "bg-[#2E9E5B]/15 text-[#2E9E5B]" : "bg-ice text-muted"}`}>
+                      {d.is_public ? "แสดง" : "ซ่อน"}
+                    </button>
+                  </td>
+                  {!readOnly && (
+                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                      <button onClick={() => move(d, -1)} className="text-[12px] text-muted hover:text-brand px-1" title="เลื่อนขึ้น">▲</button>
+                      <button onClick={() => move(d, 1)} className="text-[12px] text-muted hover:text-brand px-1" title="เลื่อนลง">▼</button>
+                      <button onClick={() => openEdit(d)} className="text-[12px] font-semibold text-brand hover:text-navy px-1.5">แก้ไข</button>
+                      <button onClick={() => remove(d)} className="text-[12px] font-semibold text-[#D94141]/70 hover:text-[#D94141] px-1">ลบ</button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-muted/70 text-[12.5px]">ยังไม่มีไฟล์ — กด &ldquo;＋ เพิ่มไฟล์&rdquo; เพื่ออัปโหลด Company Profile / Catalog / Brochure</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function MasterBody() {
   const [tab, setTab] = useState<(typeof tabs)[number]>("สินค้า/อุปกรณ์");
   const { dept, empId, access } = useDept();
@@ -518,6 +754,8 @@ function MasterBody() {
       {tab === "คลังสินค้า" && (
         <InventoryTab products={products} empId={empId} empNames={empNames} readOnly={readOnly} reload={reload} />
       )}
+
+      {tab === "ไฟล์ดาวน์โหลด (เว็บ)" && <DownloadsTab empId={empId} readOnly={readOnly} />}
 
       {tab === "รุ่นรถ AGV" && (
         <div className="grid gap-4 min-[900px]:grid-cols-2">
