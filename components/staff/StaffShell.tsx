@@ -33,6 +33,7 @@ const routes: Record<ModuleKey, string> = {
   tasks: "/staff/tasks",
   meetings: "/staff/meetings",
   calendar: "/staff/calendar",
+  content: "/staff/content",
   expenses: "/staff/expenses",
   leave: "/staff/leave",
   kpi: "/staff/kpi",

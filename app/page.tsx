@@ -1,8 +1,13 @@
 import Link from "next/link";
 import Hero from "@/components/Hero";
 import { strategicFocus, industrialSystems, industry40, whyUs, processSteps, company } from "@/lib/data";
+import { getPublishedArticles } from "@/lib/articles";
 
-export default function HomePage() {
+export const revalidate = 300;
+
+export default async function HomePage() {
+  const articles = await getPublishedArticles();
+  const articleFor = (sol: string, item: string) => articles.find((a) => a.solution_id === sol && a.solution_item === item);
   return (
     <>
       <Hero />
@@ -74,26 +79,34 @@ export default function HomePage() {
           </div>
           <div className="mt-10 grid gap-5 min-[700px]:grid-cols-2 min-[1040px]:grid-cols-3">
             {industry40.map((g) => (
-              <Link key={g.id} href={`/solution#${g.id}`}
-                className={`rounded-2xl p-6 border transition hover:shadow-lg hover:-translate-y-0.5 ${g.highlight ? "bg-brand text-white border-brand" : "bg-white border-ice hover:border-brand"}`}>
-                <div className="flex items-start gap-3">
+              <div key={g.id}
+                className={`rounded-2xl p-6 border transition hover:shadow-lg ${g.highlight ? "bg-brand text-white border-brand" : "bg-white border-ice hover:border-brand"}`}>
+                <Link href={`/solution#${g.id}`} className="flex items-start gap-3 group">
                   <span className="w-11 h-11 rounded-xl flex items-center justify-center text-[22px] shrink-0"
                     style={{ backgroundColor: g.highlight ? "rgba(255,255,255,0.18)" : g.color + "22" }}>{g.icon}</span>
                   <div>
-                    <h3 className={`text-[15px] font-bold leading-snug ${g.highlight ? "text-white" : "text-navy"}`}>{g.en}</h3>
+                    <h3 className={`text-[15px] font-bold leading-snug group-hover:underline ${g.highlight ? "text-white" : "text-navy"}`}>{g.en}</h3>
                     <p className={`text-[13px] ${g.highlight ? "text-white/80" : "text-muted"}`}>({g.th})</p>
                   </div>
-                </div>
+                </Link>
                 <ul className="mt-4 space-y-1.5">
-                  {g.items.map((it) => (
-                    <li key={it.en} className="text-[13px] leading-snug">
-                      <p className={`font-bold ${g.highlight ? "text-white" : "text-ink"}`}>• {it.en}</p>
-                      <p className={`pl-3.5 ${g.highlight ? "text-white/75" : "text-muted"}`}>{it.th}</p>
-                    </li>
-                  ))}
+                  {g.items.map((it) => {
+                    const art = articleFor(g.id, it.en);
+                    const body = (
+                      <>
+                        <p className={`font-bold ${g.highlight ? "text-white" : "text-ink"}`}>• {it.en}{art && <span className={`ml-1 text-[11px] font-semibold ${g.highlight ? "text-amber" : "text-brand"}`}>→ อ่าน</span>}</p>
+                        <p className={`pl-3.5 ${g.highlight ? "text-white/75" : "text-muted"}`}>{it.th}</p>
+                      </>
+                    );
+                    return (
+                      <li key={it.en} className="text-[13px] leading-snug">
+                        {art ? <Link href={`/blog/${art.slug}`} className={`block rounded-lg -mx-2 px-2 py-1 transition ${g.highlight ? "hover:bg-white/10" : "hover:bg-ice/70"}`}>{body}</Link> : body}
+                      </li>
+                    );
+                  })}
                 </ul>
-                {g.highlight && <p className="mt-4 text-amber text-[13px] font-semibold">จุดแข็งอันดับหนึ่งของเรา →</p>}
-              </Link>
+                {g.highlight && <Link href={`/solution#${g.id}`} className="mt-4 inline-block text-amber text-[13px] font-semibold">จุดแข็งอันดับหนึ่งของเรา →</Link>}
+              </div>
             ))}
           </div>
         </div>

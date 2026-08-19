@@ -120,3 +120,19 @@
 a {
   transition: color 150ms ease;
 }
+
+/* ── สไตล์เนื้อหาบทความ (Markdown → HTML) ── */
+.prose-article { color: var(--color-ink); font-size: 16px; line-height: 1.85; }
+.prose-article p { margin: 0 0 1.1em; }
+.prose-article h2 { font-size: 22px; font-weight: 700; color: var(--color-navy); margin: 2em 0 0.7em; padding-left: 12px; border-left: 4px solid var(--color-brand); line-height: 1.35; }
+.prose-article h3 { font-size: 18px; font-weight: 700; color: var(--color-navy); margin: 1.6em 0 0.5em; }
+.prose-article h4 { font-size: 16px; font-weight: 700; color: var(--color-brand); margin: 1.4em 0 0.4em; }
+.prose-article ul, .prose-article ol { margin: 0 0 1.2em; padding-left: 1.4em; }
+.prose-article ul { list-style: disc; }
+.prose-article ol { list-style: decimal; }
+.prose-article li { margin: 0.35em 0; }
+.prose-article li::marker { color: var(--color-brand); font-weight: 700; }
+.prose-article blockquote { border-left: 4px solid var(--color-amber); background: #FFF8EC; padding: 12px 16px; border-radius: 0 12px 12px 0; margin: 1.2em 0; color: #5a4a2a; }
+.prose-article a { color: var(--color-brand); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.prose-article a:hover { color: var(--color-navy); }
+.prose-article img { border-radius: 16px; border: 1px solid var(--color-ice); margin: 1.2em 0; }

@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import AgvImage from "@/components/AgvImage";
 import { comparison, fmsFeatures, industry40, industrialSystems } from "@/lib/data";
+import { getPublishedArticles } from "@/lib/articles";
+
+export const revalidate = 300;
 
 export const metadata: Metadata = {
   title: "โซลูชันระบบอัตโนมัติอุตสาหกรรม (Industry 4.0)",
@@ -14,7 +17,9 @@ const lidarFeatures = [
   { title: "ติดตั้งเร็ว หน้างานสะอาด", desc: "ไม่ติดแถบแม่เหล็ก ไม่เจาะพื้น ลดเวลาติดตั้งและค่าใช้จ่ายหน้างาน พื้นที่โรงงานสวยงามเหมือนเดิม" },
 ];
 
-export default function SolutionPage() {
+export default async function SolutionPage() {
+  const articles = await getPublishedArticles();
+  const articleFor = (sol: string, item: string) => articles.find((a) => a.solution_id === sol && a.solution_item === item);
   return (
     <>
       {/* หัวเรื่อง */}
@@ -63,13 +68,22 @@ export default function SolutionPage() {
                 {g.highlight && <p className="mt-3 inline-block text-[12px] font-bold bg-amber/15 text-[#9A6A10] rounded-full px-3 py-1">⭐ จุดแข็งอันดับหนึ่งของเรา</p>}
               </div>
               <div className="grid gap-3 min-[600px]:grid-cols-2">
-                {g.items.map((it) => (
-                  <div key={it.en} className="rounded-2xl border border-ice bg-white p-5 hover:border-brand transition">
-                    <div className="w-2 h-8 rounded-full mb-3" style={{ backgroundColor: g.color }} />
-                    <h3 className="text-[14.5px] font-bold text-navy leading-snug">{it.en}</h3>
-                    <p className="mt-1 text-[13px] text-muted">{it.th}</p>
-                  </div>
-                ))}
+                {g.items.map((it) => {
+                  const art = articleFor(g.id, it.en);
+                  const inner = (
+                    <>
+                      <div className="w-2 h-8 rounded-full mb-3" style={{ backgroundColor: g.color }} />
+                      <h3 className="text-[14.5px] font-bold text-navy leading-snug group-hover:text-brand transition">{it.en}</h3>
+                      <p className="mt-1 text-[13px] text-muted">{it.th}</p>
+                      {art && <p className="mt-3 text-[12.5px] font-semibold text-brand">อ่านบทความ →</p>}
+                    </>
+                  );
+                  return art ? (
+                    <Link key={it.en} href={`/blog/${art.slug}`} className="group rounded-2xl border border-ice bg-white p-5 hover:border-brand hover:shadow-md transition block">{inner}</Link>
+                  ) : (
+                    <div key={it.en} className="rounded-2xl border border-ice bg-white p-5">{inner}</div>
+                  );
+                })}
               </div>
             </div>
 
