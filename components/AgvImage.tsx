@@ -1,7 +1,6 @@
 import Image from "next/image";
 
-// รูปสินค้า AGV — ตอนนี้ใช้รูปชั่วคราวจากเอกสาร Master (ยังไม่เผยแพร่สาธารณะ)
-// TODO: เปลี่ยนเป็นรูปที่บริษัทยืนยันลิขสิทธิ์แล้วก่อนเปิดตัวเว็บจริง
+// รูปรถ AGV — ภาพ mockup 3D โทนเทาที่เรนเดอร์เอง (public/images/vehicles) ไม่ติดลิขสิทธิ์บุคคลที่สาม
 export default function AgvImage({
   src,
   alt,

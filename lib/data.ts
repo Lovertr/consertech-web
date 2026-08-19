@@ -157,7 +157,7 @@ export type Vehicle = {
   name: string;
   short: string;
   desc: string;
-  image: string; // ภาพประกอบต้นฉบับวาดใหม่ (isometric) — ปลอดลิขสิทธิ์ ใช้เผยแพร่ได้
+  image: string; // ภาพ mockup 3D โทนเทา (เรนเดอร์เอง — ไม่ติดลิขสิทธิ์)
   useCases: string[];
   specs: [string, string][];
 };
@@ -165,7 +165,7 @@ export type Vehicle = {
 export const vehicles: Vehicle[] = [
   {
     slug: "pallet-jack",
-    image: "/images/agv-pallet-jack.png",
+    image: "/images/vehicles/pallet-jack.jpg",
     name: "Pallet Jack / Forklift",
     short: "ยกพาเลทจากพื้นหรือชั้นวาง",
     desc: "รถแบบมีงายกเหมือนฟอร์คลิฟท์ สามารถยกพาเลทจากพื้นหรือวางบนชั้นวางได้ เหมาะกับการรับ-ส่งสินค้าจำนวนมากที่จัดวางบนพาเลท",
@@ -179,7 +179,7 @@ export const vehicles: Vehicle[] = [
   },
   {
     slug: "tugger-towing",
-    image: "/images/agv-tugger-towing.png",
+    image: "/images/vehicles/tugger-towing.jpg",
     name: "Tugger / Towing",
     short: "ลากจูงขบวนชั้นวางหลายคัน",
     desc: "ทำหน้าที่เป็นรถลาก จูงรถพ่วงหรือชั้นวางสินค้าต่อกันหลายคันเหมือนขบวนรถไฟ เหมาะกับการขนวัตถุดิบจำนวนมากในรอบเดียว",
@@ -193,7 +193,7 @@ export const vehicles: Vehicle[] = [
   },
   {
     slug: "lifter-underride",
-    image: "/images/agv-lifter-underride.png",
+    image: "/images/vehicles/lifter-underride.jpg",
     name: "Lifter / Underride",
     short: "มุดใต้ Rack ยกทั้งชุด",
     desc: "ตัวรถมุดเข้าใต้ชั้นวางสินค้า (Rack) หรือรถเข็น แล้วยกขึ้นเพื่อเคลื่อนย้ายไปทั้งชุด รุ่นแผงควบคุมด้านล่างสามารถลอดใต้ชั้นวางได้โดยตรง รองรับการส่งเข้าพื้นที่จัดเก็บแบบเรียงแถว",
@@ -207,7 +207,7 @@ export const vehicles: Vehicle[] = [
   },
   {
     slug: "conveyor-roller",
-    image: "/images/agv-conveyor-roller.png",
+    image: "/images/vehicles/conveyor-roller.jpg",
     name: "Conveyor / Roller",
     short: "รับ-ส่งเข้าสายพานอัตโนมัติ",
     desc: "บนตัวรถติดตั้งสายพานหรือลูกกลิ้ง รับ-ส่งสินค้ากับสายพานในโรงงานได้อัตโนมัติแบบไร้รอยต่อ เน้นการป้อนของเข้าสายการผลิต",
@@ -221,7 +221,7 @@ export const vehicles: Vehicle[] = [
   },
   {
     slug: "unit-load",
-    image: "/images/agv-unit-load.png",
+    image: "/images/vehicles/unit-load.jpg",
     name: "Unit Load",
     short: "แท่นวางสินค้าบนตัวรถ",
     desc: "มีแท่นวางด้านบนเพื่อบรรทุกสินค้าโดยตรง เป็นพื้นฐานการออกแบบที่ปรับแต่งให้เหมาะกับสายการผลิตแต่ละแบบได้มากที่สุด",

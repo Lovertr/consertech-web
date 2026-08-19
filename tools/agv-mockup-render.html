@@ -1,0 +1,163 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#fff}canvas{display:block}</style>
+</head><body>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { RoomEnvironment } from 'https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/environments/RoomEnvironment.js';
+
+const W = 1000, H = 1000;
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(W, H); renderer.setPixelRatio(1);
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0xffffff);
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+const cam = new THREE.PerspectiveCamera(28, 1, 0.1, 100);
+const key = new THREE.DirectionalLight(0xffffff, 2.2); key.position.set(4, 7, 3); key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048); key.shadow.camera.left = -3; key.shadow.camera.right = 3; key.shadow.camera.top = 3; key.shadow.camera.bottom = -3; key.shadow.radius = 6; key.shadow.bias = -0.0005;
+scene.add(key);
+scene.add(new THREE.HemisphereLight(0xffffff, 0xd8dde3, 0.9));
+const fill = new THREE.DirectionalLight(0xffffff, 0.6); fill.position.set(-5, 3, -2); scene.add(fill);
+
+// พื้นรับเงา
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), new THREE.ShadowMaterial({ opacity: 0.22 }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+
+// วัสดุโทนเทา (สไตล์ mockup)
+const M = {
+  top: new THREE.MeshStandardMaterial({ color: 0x4a4f57, metalness: 0.35, roughness: 0.45 }),
+  body: new THREE.MeshStandardMaterial({ color: 0x8f949b, metalness: 0.25, roughness: 0.4 }),
+  bodyDark: new THREE.MeshStandardMaterial({ color: 0x5c6168, metalness: 0.3, roughness: 0.45 }),
+  black: new THREE.MeshStandardMaterial({ color: 0x1e2126, metalness: 0.2, roughness: 0.6 }),
+  rubber: new THREE.MeshStandardMaterial({ color: 0x25282c, roughness: 0.9 }),
+  hub: new THREE.MeshStandardMaterial({ color: 0x8b8f95, metalness: 0.7, roughness: 0.3 }),
+  red: new THREE.MeshStandardMaterial({ color: 0xd9262b, roughness: 0.4 }),
+  green: new THREE.MeshStandardMaterial({ color: 0x35b56a, roughness: 0.4 }),
+  blue: new THREE.MeshStandardMaterial({ color: 0x15659e, roughness: 0.4 }),
+  cyan: new THREE.MeshStandardMaterial({ color: 0x8fd3ff, emissive: 0x2a9fe0, emissiveIntensity: 0.6, roughness: 0.3 }),
+  glass: new THREE.MeshStandardMaterial({ color: 0x0b1a2a, metalness: 0.6, roughness: 0.15 }),
+  roller: new THREE.MeshStandardMaterial({ color: 0x9ea3a9, metalness: 0.75, roughness: 0.3 }),
+  steel: new THREE.MeshStandardMaterial({ color: 0xc2c6cb, metalness: 0.6, roughness: 0.35 }),
+};
+const root = new THREE.Group(); scene.add(root);
+function add(geo, mat, x = 0, y = 0, z = 0, parent = root) { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; parent.add(m); return m; }
+function box(w, h, d, mat, x, y, z, p) { return add(new THREE.BoxGeometry(w, h, d), mat, x, y, z, p); }
+function rbox(w, h, d, mat, x, y, z, p, r = 0.03) { return add(new RoundedBoxGeometry(w, h, d, 4, r), mat, x, y, z, p); }
+function roller(r, len, mat, x, y, z, p) { const m = add(new THREE.CylinderGeometry(r, r, len, 32), mat, x, y, z, p); m.rotation.x = Math.PI / 2; return m; }
+function cyl(r, h, mat, x, y, z, rotZ = 0, p, seg = 40) { const m = add(new THREE.CylinderGeometry(r, r, h, seg), mat, x, y, z, p); m.rotation.z = rotZ; return m; }
+function wheel(x, y, z, r = 0.16, w = 0.09, p) { roller(r, w, M.rubber, x, y, z, p); roller(r * 0.6, w + 0.006, M.hub, x, y, z, p); }
+function caster(x, z, p) { roller(0.06, 0.05, M.rubber, x, 0.06, z, p); }
+function lidar(x, y, z, p) { cyl(0.05, 0.05, M.black, x, y, z, 0, p); cyl(0.045, 0.02, M.glass, x, y + 0.03, z, 0, p); }
+function estop(x, y, z, p) { cyl(0.025, 0.02, M.red, x, y, z, 0, p).rotation.x = Math.PI / 2; }
+function lightbar(x, y, z, len, p, mat = M.cyan) { box(len, 0.02, 0.012, mat, x, y, z, p); }
+
+// ตัวถังพื้นฐาน (แชสซี) — L x W x H  วางบนพื้น (y=0)
+function chassis(L = 1.2, Wd = 0.8, Hh = 0.32, p = root) {
+  const g = new THREE.Group(); p.add(g);
+  const y0 = 0.05;
+  rbox(L, Hh, Wd, M.body, 0, y0 + Hh / 2, 0, g, 0.04);
+  // ขอบบน/ล่างสีเข้ม
+  box(L + 0.02, 0.05, Wd + 0.02, M.bodyDark, 0, y0 + Hh - 0.025, 0, g);
+  box(L + 0.03, 0.06, Wd + 0.03, M.black, 0, y0 + 0.03, 0, g);
+  // ลบมุมหน้า-หลัง (บล็อกทะแยง)
+  // ล้อขับ 2 ข้าง กลางลำ + ล้อประคอง 4 มุม
+  wheel(0, 0.13, Wd / 2 + 0.005, 0.13, 0.07, g); wheel(0, 0.13, -Wd / 2 - 0.005, 0.13, 0.07, g);
+  // ซุ้มล้อ
+  box(0.32, 0.22, 0.1, M.black, 0, 0.14, Wd / 2 - 0.045, g); box(0.32, 0.22, 0.1, M.black, 0, 0.14, -Wd / 2 + 0.045, g);
+  caster(L / 2 - 0.15, Wd / 2 - 0.12, g); caster(L / 2 - 0.15, -Wd / 2 + 0.12, g); caster(-L / 2 + 0.15, Wd / 2 - 0.12, g); caster(-L / 2 + 0.15, -Wd / 2 + 0.12, g);
+  // LiDAR มุมหน้า-ซ้าย และหลัง-ขวา
+  lidar(L / 2 - 0.08, y0 + Hh + 0.02, Wd / 2 - 0.08, g); lidar(-L / 2 + 0.08, y0 + Hh + 0.02, -Wd / 2 + 0.08, g);
+  // ปุ่มฉุกเฉิน + ไฟสถานะ ด้านหน้า
+  estop(L / 2 + 0.005, y0 + Hh * 0.55, Wd * 0.28, g);
+  lightbar(0, y0 + Hh * 0.35, Wd / 2 + 0.012, L * 0.7, g); lightbar(0, y0 + Hh * 0.35, -Wd / 2 - 0.012, L * 0.7, g);
+  const fr = box(0.012, 0.02, Wd * 0.7, M.cyan, L / 2 + 0.012, y0 + Hh * 0.35, 0, g);
+  return g;
+}
+
+const type = new URLSearchParams(location.search).get('t') || 'unit-load';
+if (type === 'unit-load') {
+  chassis(1.15, 0.8, 0.3);
+  rbox(1.05, 0.03, 0.72, M.top, 0, 0.37, 0, root, 0.012);
+  box(1.0, 0.012, 0.66, M.bodyDark, 0, 0.392, 0);
+  // หมุดตำแหน่ง 4 มุม
+  for (const [x, z] of [[0.42, 0.26], [0.42, -0.26], [-0.42, 0.26], [-0.42, -0.26]]) cyl(0.025, 0.03, M.hub, x, 0.41, z);
+}
+if (type === 'lifter-underride') {
+  chassis(1.2, 0.8, 0.28);
+  // กระบอกยก + แผ่นยกขึ้น
+  cyl(0.12, 0.14, M.bodyDark, 0, 0.4, 0);
+  rbox(1.3, 0.035, 0.9, M.top, 0, 0.485, 0, root, 0.015);
+  cyl(0.11, 0.01, M.black, 0, 0.508, 0);
+  for (const [x, z] of [[0.5, 0.35], [0.5, -0.35], [-0.5, 0.35], [-0.5, -0.35]]) cyl(0.02, 0.012, M.hub, x, 0.508, z);
+}
+if (type === 'conveyor-roller') {
+  chassis(1.25, 0.8, 0.28);
+  // เฟรมสายพานลูกกลิ้ง
+  box(1.25, 0.05, 0.05, M.bodyDark, 0, 0.36, 0.36); box(1.25, 0.05, 0.05, M.bodyDark, 0, 0.36, -0.36);
+  box(1.25, 0.16, 0.03, M.steel, 0, 0.44, 0.39); box(1.25, 0.16, 0.03, M.steel, 0, 0.44, -0.39);
+  for (let i = 0; i < 13; i++) roller(0.03, 0.74, M.roller, -0.57 + i * 0.095, 0.4, 0);
+  // เซนเซอร์ตรวจสินค้า
+  box(0.03, 0.05, 0.03, M.black, 0.5, 0.55, 0.39); box(0.03, 0.05, 0.03, M.black, -0.5, 0.55, 0.39);
+}
+if (type === 'tugger-towing') {
+  const g = chassis(1.05, 0.7, 0.34);
+  // ฝาบนสูงขึ้นด้านหน้า (ห้องอุปกรณ์) + เสาไฟ
+  box(0.5, 0.18, 0.62, M.top, 0.2, 0.48, 0);
+  box(0.46, 0.012, 0.56, M.bodyDark, 0.2, 0.575, 0);
+  cyl(0.02, 0.4, M.black, 0.35, 0.78, -0.22); cyl(0.035, 0.03, M.red, 0.35, 0.99, -0.22); cyl(0.035, 0.03, M.green, 0.35, 0.96, -0.22);
+  // ตะขอลาก ท้ายรถ
+  box(0.2, 0.06, 0.12, M.bodyDark, -0.6, 0.2, 0);
+  cyl(0.02, 0.18, M.steel, -0.68, 0.24, 0);
+  box(0.06, 0.03, 0.06, M.steel, -0.68, 0.34, 0);
+  // ห่วงลาก
+  const ring = add(new THREE.TorusGeometry(0.06, 0.014, 12, 40), M.steel, -0.76, 0.24, 0); ring.rotation.x = Math.PI / 2;
+}
+if (type === 'pallet-jack') {
+  // ลำตัวสูงด้านหลัง + งา 2 อันยื่นหน้า
+  const g = new THREE.Group(); root.add(g);
+  rbox(0.6, 0.6, 0.7, M.body, -0.4, 0.35, 0, g, 0.04);
+  box(0.62, 0.05, 0.72, M.bodyDark, -0.4, 0.62, 0, g);
+  box(0.63, 0.06, 0.73, M.black, -0.4, 0.08, 0, g);
+  rbox(0.6, 0.35, 0.7, M.top, -0.4, 0.82, 0, g, 0.04); // ส่วนบน (แบตเตอรี่/ชุดควบคุม)
+  box(0.3, 0.02, 0.5, M.bodyDark, -0.4, 1.0, 0, g);
+  // จอ + เสา LiDAR
+  box(0.03, 0.14, 0.2, M.glass, -0.72, 0.85, 0, g);
+  cyl(0.02, 0.35, M.black, -0.5, 1.15, 0.2, 0, g); lidar(-0.5, 1.33, 0.2, g);
+  estop(-0.4, 1.0, 0.36 + 0.005, g);
+  // งา
+  for (const z of [0.2, -0.2]) { box(1.1, 0.06, 0.16, M.bodyDark, 0.45, 0.09, z, g); box(0.1, 0.06, 0.16, M.bodyDark, 1.0, 0.09, z, g).rotation.z = 0; wheel(0.85, 0.05, z, 0.05, 0.06, g); }
+  box(0.12, 0.5, 0.7, M.bodyDark, -0.08, 0.31, 0, g); // แผ่นหลังงา
+  wheel(-0.4, 0.13, 0.355, 0.13, 0.07, g); wheel(-0.4, 0.13, -0.355, 0.13, 0.07, g);
+  box(0.32, 0.22, 0.1, M.black, -0.4, 0.14, 0.305, g); box(0.32, 0.22, 0.1, M.black, -0.4, 0.14, -0.305, g);
+  lidar(-0.12, 0.6, 0.3, g);
+  lightbar(-0.4, 0.5, 0.36 + 0.012, 0.4, g); lightbar(-0.4, 0.5, -0.36 - 0.012, 0.4, g);
+  root.position.x = -0.15;
+}
+
+// เงานุ่มจำลอง (swiftshader ไม่รองรับ shadow map)
+{
+  const bb0 = new THREE.Box3().setFromObject(root); const sz = bb0.getSize(new THREE.Vector3()); const c0 = bb0.getCenter(new THREE.Vector3());
+  const cv = document.createElement('canvas'); cv.width = cv.height = 512; const ctx = cv.getContext('2d');
+  const gr = ctx.createRadialGradient(256, 256, 40, 256, 256, 256); gr.addColorStop(0, 'rgba(20,25,35,0.42)'); gr.addColorStop(0.55, 'rgba(20,25,35,0.16)'); gr.addColorStop(1, 'rgba(20,25,35,0)');
+  ctx.fillStyle = gr; ctx.fillRect(0, 0, 512, 512);
+  const tex = new THREE.CanvasTexture(cv);
+  const sh = new THREE.Mesh(new THREE.PlaneGeometry(sz.x * 1.6, sz.z * 1.9), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+  sh.rotation.x = -Math.PI / 2; sh.position.set(c0.x + 0.08, 0.002, c0.z + 0.05); scene.add(sh);
+}
+// จัดกล้องให้ครอบวัตถุ (มุมหน้า-ซ้าย ยกสูง)
+const bb = new THREE.Box3().setFromObject(root); const c = bb.getCenter(new THREE.Vector3()); const s = bb.getSize(new THREE.Vector3()).length();
+const dir = new THREE.Vector3(1.6, 0.9, 1.25).normalize();
+cam.position.copy(c).addScaledVector(dir, s * 1.35 + 0.6); cam.lookAt(c.x, c.y * 0.9, c.z);
+key.target.position.copy(c); scene.add(key.target); key.target.updateMatrixWorld(); scene.updateMatrixWorld(true);
+renderer.render(scene, cam);
+window.__done = true;
+</script>
+</body></html>

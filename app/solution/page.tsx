@@ -108,7 +108,7 @@ export default async function SolutionPage() {
                       <Link href="/fleet-management" className="btn border border-white/50 text-white hover:bg-white/10 text-[14px] py-2.5">Fleet Management System</Link>
                     </div>
                   </div>
-                  <AgvImage src="/images/agv-lifter-underride.png" alt="LiDAR-Guided AGV" ratio="1/1" className="bg-white rounded-2xl p-4" sizes="(max-width: 900px) 90vw, 35vw" />
+                  <AgvImage src="/images/vehicles/lifter-underride.jpg" alt="LiDAR-Guided AGV" ratio="1/1" className="bg-white rounded-2xl p-4" sizes="(max-width: 900px) 90vw, 35vw" />
                 </div>
                 <div className="mt-8 overflow-x-auto rounded-xl bg-white text-ink">
                   <table className="w-full min-w-[720px] text-[13.5px]">
