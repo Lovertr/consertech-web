@@ -5,11 +5,11 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import StaffShell, { useDept } from "@/components/staff/StaffShell";
-import { agvModels, docTemplates, knowledgeBase } from "@/lib/staffData";
+import { agvModels, docTemplates } from "@/lib/staffData";
 import { supabase } from "@/lib/supabase";
 
 const fmt = (n: number) => n.toLocaleString("th-TH");
-const tabs = ["สินค้า/อุปกรณ์", "คลังสินค้า", "ไฟล์ดาวน์โหลด (เว็บ)", "รุ่นรถ AGV", "Template เอกสาร", "ฐานความรู้"] as const;
+const tabs = ["สินค้า/อุปกรณ์", "คลังสินค้า", "ไฟล์ดาวน์โหลด (เว็บ)", "รุ่นรถ AGV", "Template เอกสาร", "ฐานความรู้ AI"] as const;
 
 export type DbProduct = {
   id: number; code: string; name: string; description: string | null;
@@ -805,25 +805,104 @@ function MasterBody() {
         </div>
       )}
 
-      {tab === "ฐานความรู้" && (
-        <div className="space-y-3">
-          {knowledgeBase.map((k) => (
-            <div key={k.topic} className="card-white p-4 flex flex-wrap items-center justify-between gap-3 text-[13.5px]">
-              <div>
-                <p className="font-bold text-navy">{k.topic}</p>
-                <p className="text-[12px] text-muted">{k.source}</p>
-              </div>
-              <span className={`text-[11px] font-bold rounded px-2 py-1 ${k.aiReady ? "bg-ice text-brand" : "bg-amber/15 text-amber"}`}>
-                {k.aiReady ? "✨ AI พร้อมตอบจากเอกสารนี้" : "รอจัดเข้าฐาน AI"}
-              </span>
+      {tab === "ฐานความรู้ AI" && <KnowledgeTab empId={empId} readOnly={readOnly} />}
+    </>
+  );
+}
+
+// ── ฐานความรู้ AI (ตาราง ai_knowledge) — AI Copilot ทุกฟีเจอร์ข้อความจะอ่านรายการที่เปิดใช้เข้า system prompt ──
+type KbRow = { id: number; category: string; title: string; content: string; sort_order: number; enabled: boolean; updated_at: string; updated_by: string | null };
+const KB_CATS = ["บริษัท", "บริการ", "โซลูชัน", "สินค้า", "การขาย", "เทคนิค", "ราคา/เงื่อนไข", "อื่นๆ"];
+function KnowledgeTab({ empId, readOnly }: { empId: string; readOnly: boolean }) {
+  const [rows, setRows] = useState<KbRow[]>([]);
+  const [edit, setEdit] = useState<Partial<KbRow> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const load = async () => {
+    if (!supabase) return;
+    const { data } = await supabase.from("ai_knowledge").select("*").order("sort_order").order("id");
+    setRows((data as KbRow[]) ?? []);
+  };
+  useEffect(() => { load(); }, []);
+  const save = async () => {
+    if (!supabase || !edit || !edit.title?.trim() || !edit.content?.trim()) { setMsg("กรอกหัวข้อและเนื้อหา"); return; }
+    setBusy(true);
+    const payload = { category: edit.category ?? "อื่นๆ", title: edit.title.trim(), content: edit.content, sort_order: edit.sort_order ?? 100, enabled: edit.enabled ?? true, updated_by: empId, updated_at: new Date().toISOString() };
+    const { error } = edit.id ? await supabase.from("ai_knowledge").update(payload).eq("id", edit.id) : await supabase.from("ai_knowledge").insert(payload);
+    setBusy(false);
+    if (error) { setMsg("บันทึกไม่สำเร็จ: " + error.message); return; }
+    setEdit(null); setMsg("บันทึกแล้ว — AI จะใช้ข้อมูลใหม่ภายใน ~5 นาที"); load();
+  };
+  const toggle = async (r: KbRow) => { if (!supabase || readOnly) return; await supabase.from("ai_knowledge").update({ enabled: !r.enabled, updated_by: empId }).eq("id", r.id); load(); };
+  const del = async (r: KbRow) => { if (!supabase || readOnly) return; if (!confirm(`ลบ "${r.title}"?`)) return; await supabase.from("ai_knowledge").delete().eq("id", r.id); load(); };
+  const totalChars = rows.filter((r) => r.enabled).reduce((a, r) => a + r.content.length, 0);
+  return (
+    <div className="space-y-4">
+      <div className="card-white p-4 text-[13px]">
+        <p className="font-bold text-navy text-[15px]">🧠 ฐานความรู้ที่ AI ใช้ตอบ</p>
+        <p className="text-muted mt-1">
+          ทุกฟีเจอร์ AI ในระบบ (โค้ชฝ่ายขาย, ร่างอีเมล, ประเมิน Lead, สรุปดีล, รายงานผู้บริหาร, ถาม-ตอบวิศวกร ฯลฯ) จะอ่านรายการที่ &ldquo;เปิดใช้&rdquo; ทั้งหมดเป็นความรู้พื้นฐาน
+          — อัปเดตที่นี่ได้ทันทีเมื่อมีสินค้า/แบรนด์/โซลูชัน/เงื่อนไขใหม่ ไม่ต้องแก้โค้ด (มีผลภายใน ~5 นาที)
+        </p>
+        <p className="mt-1.5 text-[12px] text-muted/80">เปิดใช้ {rows.filter((r) => r.enabled).length}/{rows.length} รายการ · รวม {totalChars.toLocaleString()} ตัวอักษร {totalChars > 16000 && <span className="text-amber font-bold">— ยาวมาก AI จะอ่านได้ถึง ~20,000 ตัวอักษรแรก ควรกระชับ</span>}</p>
+        {!readOnly && !edit && <button onClick={() => setEdit({ category: "สินค้า", enabled: true, sort_order: 100 })} className="btn btn-primary text-[12.5px] py-2 px-4 mt-3">＋ เพิ่มความรู้</button>}
+        {msg && <p className="mt-2 text-[12.5px] text-brand">{msg}</p>}
+      </div>
+
+      {edit && (
+        <div className="card-white p-4 space-y-3 border-2 border-brand/30">
+          <p className="font-bold text-navy">{edit.id ? "แก้ไข" : "เพิ่ม"}ความรู้</p>
+          <div className="grid gap-3 sm:grid-cols-[160px_1fr_90px]">
+            <div>
+              <label className="text-[11.5px] font-bold text-muted">หมวด</label>
+              <select value={edit.category ?? "อื่นๆ"} onChange={(e) => setEdit({ ...edit, category: e.target.value })} className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px] bg-white">
+                {KB_CATS.map((c) => <option key={c}>{c}</option>)}
+              </select>
             </div>
-          ))}
-          <p className="text-[12px] text-muted/70 italic">
-            ฐานความรู้จากเอกสาร Master 180 หน้า — พนักงานถามได้ทั้งใน Portal และผ่านแชทบอทหน้าเว็บ (ระบบจริงใช้ RAG + AI API)
-          </p>
+            <div>
+              <label className="text-[11.5px] font-bold text-muted">หัวข้อ</label>
+              <input value={edit.title ?? ""} onChange={(e) => setEdit({ ...edit, title: e.target.value })} placeholder="เช่น สินค้าแบรนด์ Siemens ที่จำหน่าย" className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
+            </div>
+            <div>
+              <label className="text-[11.5px] font-bold text-muted">ลำดับ</label>
+              <input type="number" value={edit.sort_order ?? 100} onChange={(e) => setEdit({ ...edit, sort_order: +e.target.value })} className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
+            </div>
+          </div>
+          <div>
+            <label className="text-[11.5px] font-bold text-muted">เนื้อหา (เขียนเป็นข้อความธรรมดา/ข้อๆ ยิ่งชัดยิ่งดี)</label>
+            <textarea value={edit.content ?? ""} onChange={(e) => setEdit({ ...edit, content: e.target.value })} rows={10} className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px] leading-relaxed" placeholder="เช่น รายการสินค้า/รุ่น/จุดเด่น/เงื่อนไขการขาย/คำถามที่ลูกค้าถามบ่อย" />
+          </div>
+          <label className="flex items-center gap-2 text-[13px]"><input type="checkbox" checked={edit.enabled ?? true} onChange={(e) => setEdit({ ...edit, enabled: e.target.checked })} /> เปิดใช้ (AI อ่านรายการนี้)</label>
+          <div className="flex gap-2">
+            <button onClick={save} disabled={busy} className="btn btn-primary text-[12.5px] py-2 px-4 disabled:opacity-50">{busy ? "กำลังบันทึก..." : "บันทึก"}</button>
+            <button onClick={() => setEdit(null)} className="btn btn-outline text-[12.5px] py-2 px-4">ยกเลิก</button>
+          </div>
         </div>
       )}
-    </>
+
+      <div className="space-y-2.5">
+        {rows.map((r) => (
+          <div key={r.id} className={`card-white p-4 text-[13px] ${r.enabled ? "" : "opacity-60"}`}>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="min-w-0">
+                <span className="text-[10.5px] font-bold rounded px-1.5 py-0.5 bg-ice text-brand mr-2">{r.category}</span>
+                <span className="font-bold text-navy">{r.title}</span>
+                <p className="text-[11px] text-muted/70 mt-0.5">ลำดับ {r.sort_order} · {r.content.length.toLocaleString()} ตัวอักษร · แก้ล่าสุด {new Date(r.updated_at).toLocaleDateString("th-TH")}{r.updated_by ? ` โดย ${r.updated_by}` : ""}</p>
+              </div>
+              {!readOnly && (
+                <div className="flex gap-1.5 shrink-0">
+                  <button onClick={() => toggle(r)} className={`text-[11.5px] font-bold rounded-lg px-2.5 py-1.5 ${r.enabled ? "bg-[#2E9E5B]/10 text-[#2E9E5B]" : "bg-ice text-muted"}`}>{r.enabled ? "✓ เปิดใช้" : "ปิดอยู่"}</button>
+                  <button onClick={() => setEdit(r)} className="text-[11.5px] font-bold rounded-lg px-2.5 py-1.5 bg-ice text-brand">แก้ไข</button>
+                  <button onClick={() => del(r)} className="text-[11.5px] font-bold rounded-lg px-2.5 py-1.5 text-[#D94141]/80 hover:bg-[#D94141]/10">ลบ</button>
+                </div>
+              )}
+            </div>
+            <pre className="mt-2 whitespace-pre-wrap font-[inherit] text-[12.5px] text-ink/85 leading-relaxed max-h-[180px] overflow-auto">{r.content}</pre>
+          </div>
+        ))}
+        {rows.length === 0 && <p className="text-[12.5px] text-muted/70">ยังไม่มีข้อมูล</p>}
+      </div>
+    </div>
   );
 }
 

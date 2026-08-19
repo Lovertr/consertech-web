@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import StaffShell, { useDept } from "@/components/staff/StaffShell";
+import Combo from "@/components/staff/Combo";
 import {
   expensePolicy, expenseCategories, mapPlaces, roadKm,
   expenseRatesByPosition, type PositionKey,
@@ -438,7 +439,7 @@ function TravelForm({ onTotal, empId }: { onTotal: (n: number) => void; empId: s
           จุดเริ่มต้น
           {target === "from" && <span className="ml-1.5 text-[10.5px] font-bold bg-brand text-white rounded px-1.5 py-0.5 align-middle">กำลังปักหมุด</span>}
         </label>
-        <input list="map-places" value={from.name} onChange={(e) => typeName("from")(e.target.value)} onFocus={() => setTarget("from")}
+        <Combo value={from.name} onChange={typeName("from")} onFocus={() => setTarget("from")} options={mapPlaces.map((pl) => pl.name)}
           placeholder="พิมพ์ค้นหาสถานที่..." className={`w-full rounded-lg border px-3 py-2 ${target === "from" ? "border-brand" : "border-ice"}`} />
         <p className={`mt-0.5 text-[11px] ${from.lat != null ? "text-sky" : "text-amber"}`}>{coordLabel(from)}</p>
       </div>
@@ -447,13 +448,10 @@ function TravelForm({ onTotal, empId }: { onTotal: (n: number) => void; empId: s
           จุดสิ้นสุด
           {target === "to" && <span className="ml-1.5 text-[10.5px] font-bold bg-amber text-white rounded px-1.5 py-0.5 align-middle">กำลังปักหมุด</span>}
         </label>
-        <input list="map-places" value={to.name} onChange={(e) => typeName("to")(e.target.value)} onFocus={() => setTarget("to")}
+        <Combo value={to.name} onChange={typeName("to")} onFocus={() => setTarget("to")} options={mapPlaces.map((pl) => pl.name)}
           placeholder="พิมพ์ค้นหาสถานที่..." className={`w-full rounded-lg border px-3 py-2 ${target === "to" ? "border-amber" : "border-ice"}`} />
         <p className={`mt-0.5 text-[11px] ${to.lat != null ? "text-sky" : "text-amber"}`}>{coordLabel(to)}</p>
       </div>
-      <datalist id="map-places">
-        {mapPlaces.map((pl) => <option key={pl.name} value={pl.name} />)}
-      </datalist>
 
       {/* แผนที่: แตะเพื่อปักหมุด + แสดงเส้นทางขับจริง (น้ำเงิน=ขาไป, ส้มประ=ขากลับ) */}
       <div>

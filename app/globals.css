@@ -36,6 +36,12 @@
   }
 }
 
+
+/* กันเนื้อหาล้นจอมือถือ: input วันที่/เวลา (โดยเฉพาะภาษาไทย/ปี พ.ศ.) มีความกว้างขั้นต่ำในตัว
+   ทำให้คอลัมน์ grid ขยายเกินการ์ด → บังคับให้ย่อได้ และลูกของ grid/flex ไม่ดันความกว้างพ่อ */
+input, select, textarea { min-width: 0; max-width: 100%; }
+.grid > * { min-width: 0; }
+
 /* utility ตาม token */
 .container-site {
   max-width: 1280px;

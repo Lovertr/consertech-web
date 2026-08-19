@@ -200,7 +200,7 @@ function ClientsBody() {
           {thread ? (
             <>
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-ice pb-3">
-                <div>
+                <div className="min-w-0 break-words">
                   <p className="font-bold text-navy">
                     {selProject ? `${selProject.code} — ${selProject.name}` : `${selCustomer?.name}${selCustomer?.contact_name ? ` — ${selCustomer.contact_name}` : ""}`}
                   </p>

@@ -9,6 +9,7 @@ import { callCopilot } from "@/lib/copilot";
 import { proposals } from "@/lib/staffData";
 import SignaturePad from "@/components/staff/SignaturePad";
 import { supabase } from "@/lib/supabase";
+import Combo from "@/components/staff/Combo";
 
 const fmt = (n: number) => n.toLocaleString("th-TH");
 
@@ -420,9 +421,10 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
           </div>
           <div>
             <label className="text-[11.5px] font-bold text-muted">ลูกค้า (พิมพ์ค้นหาจากระบบ หรือพิมพ์ชื่อใหม่) *</label>
-            <input list="qt-customers" value={customer} disabled={readOnly} placeholder="พิมพ์ชื่อบริษัท..."
-              onChange={(e) => {
-                const v = e.target.value; setCustomer(v);
+            <Combo value={customer} disabled={readOnly} placeholder="พิมพ์ชื่อบริษัท..."
+              options={dbCustomers.flatMap((c) => [{ value: c.name, label: c.name_en ?? undefined }, ...(c.name_en ? [{ value: c.name_en, label: c.name }] : [])])}
+              onChange={(v) => {
+                setCustomer(v);
                 const hit = dbCustomers.find((c) => c.name === v || c.name_en === v);
                 if (hit) {
                   // เติมข้อมูลจากระบบลูกค้าให้อัตโนมัติ
@@ -433,26 +435,15 @@ function QuotationBuilder({ readOnly }: { readOnly: boolean }) {
                 }
               }}
               className="mt-1 w-full text-[13px] rounded-lg border border-ice px-3 py-2" />
-            <datalist id="qt-customers">
-              {dbCustomers.flatMap((c) => [
-                <option key={c.id} value={c.name} label={c.name_en ?? undefined} />,
-                ...(c.name_en ? [<option key={`${c.id}-en`} value={c.name_en} label={c.name} />] : []),
-              ])}
-            </datalist>
           </div>
           <div>
             <label className="text-[11.5px] font-bold text-muted">ผู้ติดต่อ (ATTN — พิมพ์ค้นหาได้)</label>
-            <input list="qt-contacts" value={contactName} onChange={(e) => setContactName(e.target.value)} disabled={readOnly} placeholder="ชื่อผู้ติดต่อฝั่งลูกค้า"
-              className="mt-1 w-full text-[13px] rounded-lg border border-ice px-3 py-2" />
-            <datalist id="qt-contacts">
-              {(dbCustomers.find((c) => c.name === customer || c.name_en === customer)
+            <Combo value={contactName} onChange={setContactName} disabled={readOnly} placeholder="ชื่อผู้ติดต่อฝั่งลูกค้า"
+              options={(dbCustomers.find((c) => c.name === customer || c.name_en === customer)
                 ? dbContacts.filter((x) => x.customer_id === dbCustomers.find((c) => c.name === customer || c.name_en === customer)!.id)
                 : dbContacts
-              ).flatMap((x) => [
-                <option key={x.id} value={x.name} label={x.name_en ?? undefined} />,
-                ...(x.name_en ? [<option key={`${x.id}-en`} value={x.name_en} label={x.name} />] : []),
-              ])}
-            </datalist>
+              ).flatMap((x) => [{ value: x.name, label: x.name_en ?? undefined }, ...(x.name_en ? [{ value: x.name_en, label: x.name }] : [])])}
+              className="mt-1 w-full text-[13px] rounded-lg border border-ice px-3 py-2" />
           </div>
           <div>
             <label className="text-[11.5px] font-bold text-muted">Tax ID ลูกค้า</label>

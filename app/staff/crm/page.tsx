@@ -11,6 +11,7 @@ import { THAI_PROVINCES } from "@/lib/thaiProvinces";
 import { THAI_INDUSTRIES, SOLUTION_INTERESTS } from "@/lib/industries";
 import { supabase } from "@/lib/supabase";
 import { callCopilot } from "@/lib/copilot";
+import Combo from "@/components/staff/Combo";
 
 // ── Types (ตรงกับตารางใน Supabase) ──
 type DbDeal = {
@@ -58,7 +59,7 @@ function AiSummary({ deal, acts }: { deal: DbDeal; acts: DbActivity[] }) {
       const j = await callCopilot({
         action: "summarize_deal",
         payload: [
-          `บริษัทเรา: CONSERTECH ผู้ขายระบบ AGV และอุปกรณ์อัตโนมัติในโรงงาน`,
+          `บริษัทเรา: CONSERTECH ที่ปรึกษา/System Integrator ระบบอัตโนมัติอุตสาหกรรมครบวงจร และตัวแทนจำหน่ายอุปกรณ์อัตโนมัติหลายแบรนด์ (ดูฐานความรู้บริษัท)`,
           `ลูกค้า: ${deal.customer_name} (${deal.industry ?? "-"})`,
           `โซลูชันที่สนใจ: ${deal.solution ?? "-"}`,
           `ขั้นดีล: ${STAGES.find((s) => s.key === deal.stage)?.label ?? deal.stage} | มูลค่าระดับ: ${deal.value_level}`,
@@ -408,21 +409,18 @@ function AddDealForm({ customers, empId, onDone }: { customers: DbCustomer[]; em
       <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
         <div>
           <label className="text-[11.5px] font-bold text-muted">ลูกค้า (เลือกจากรายชื่อเดิม หรือพิมพ์ชื่อใหม่)</label>
-          <input list="crm-customers" value={name} onChange={(e) => setName(e.target.value)} placeholder="ชื่อบริษัทลูกค้า"
+          <Combo value={name} onChange={setName} placeholder="ชื่อบริษัทลูกค้า" options={customers.map((c) => c.name)}
             className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
-          <datalist id="crm-customers">{customers.map((c) => <option key={c.id} value={c.name} />)}</datalist>
         </div>
         <div>
           <label className="text-[11.5px] font-bold text-muted">อุตสาหกรรม (พิมพ์ค้นหา/เลือก)</label>
-          <input list="deal-industry-options" value={industry} onChange={(e) => setIndustry(e.target.value)} placeholder="เช่น ยานยนต์และชิ้นส่วน (Automotive)"
+          <Combo value={industry} onChange={setIndustry} placeholder="เช่น ยานยนต์และชิ้นส่วน (Automotive)" options={THAI_INDUSTRIES}
             className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
-          <datalist id="deal-industry-options">{THAI_INDUSTRIES.map((i) => <option key={i} value={i} />)}</datalist>
         </div>
         <div>
           <label className="text-[11.5px] font-bold text-muted">โซลูชันที่สนใจ</label>
-          <input list="deal-solution-options" value={solution} onChange={(e) => setSolution(e.target.value)} placeholder="เช่น Lifter AGV x2 + FMS"
+          <Combo value={solution} onChange={setSolution} placeholder="เช่น Lifter AGV x2 + FMS" options={SOLUTION_INTERESTS}
             className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
-          <datalist id="deal-solution-options">{SOLUTION_INTERESTS.map((s) => <option key={s} value={s} />)}</datalist>
         </div>
         <div>
           <label className="text-[11.5px] font-bold text-muted">มูลค่าโดยประมาณ</label>
@@ -521,7 +519,7 @@ function DealDetail({
       const j = await callCopilot({
         action: "ask",
         payload: [
-          `คุณคือ AI ประเมินคุณภาพ Lead ของ CONSERTECH (ผู้ขายระบบ AGV/AMR และอุปกรณ์อัตโนมัติในโรงงาน)`,
+          `คุณคือ AI ประเมินคุณภาพ Lead ของ CONSERTECH (ที่ปรึกษา/System Integrator ระบบอัตโนมัติอุตสาหกรรมครบวงจร + จำหน่ายอุปกรณ์อัตโนมัติหลายแบรนด์ — พิจารณาโอกาสทุกสายผลิตภัณฑ์ ไม่ใช่แค่ AGV)`,
           `ประเมินดีลนี้เป็นคะแนน 0-100 (โอกาสปิดการขาย ยิ่งสูงยิ่งดี) พร้อมเหตุผลสั้นๆ 1-2 ประโยคภาษาไทย`,
           `ข้อมูลดีล:`,
           `- ลูกค้า: ${deal.customer_name} (${deal.industry ?? "-"})`,
@@ -1265,9 +1263,8 @@ function CustomersTab() {
       </div>
       <div className="sm:col-span-2">
         <label className="text-[11.5px] font-bold text-muted">อุตสาหกรรม (พิมพ์ค้นหา/เลือกจากรายการ)</label>
-        <input list="industry-options" value={String(edit.industry ?? "")} onChange={(e) => setEdit({ ...edit, industry: e.target.value })} disabled={readOnly}
+        <Combo value={String(edit.industry ?? "")} onChange={(v) => setEdit({ ...edit, industry: v })} disabled={readOnly} options={THAI_INDUSTRIES}
           placeholder="เช่น ยานยนต์และชิ้นส่วน (Automotive)" className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
-        <datalist id="industry-options">{THAI_INDUSTRIES.map((i) => <option key={i} value={i} />)}</datalist>
       </div>
       <div className="sm:col-span-2">
         <label className="text-[11.5px] font-bold text-muted">💡 ความสนใจ (โซลูชันที่ลูกค้าสนใจ — เลือกได้หลายอัน)</label>
@@ -1516,12 +1513,12 @@ function CustomersTab() {
                     <p className="text-[12.5px] font-bold text-navy">🔗 รวม &ldquo;{selected.name}&rdquo; เข้ากับบริษัทอื่น</p>
                     <p className="text-[11.5px] text-muted mt-0.5">ผู้ติดต่อ/ดีล/ประวัติทั้งหมดของบริษัทนี้จะย้ายไปบริษัทปลายทาง แล้วบริษัทนี้จะถูกลบ (ข้อมูลที่ปลายทางยังไม่มีจะถูกเติมจากบริษัทนี้ให้)</p>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      <input list="merge-targets" value={mergeTarget} onChange={(e) => setMergeTarget(e.target.value)}
-                        placeholder="พิมพ์ค้นหาบริษัทปลายทาง (ตัวที่ถูกต้อง)..."
-                        className="flex-1 min-w-[220px] rounded-lg border border-ice px-3 py-2 text-[12.5px]" />
-                      <datalist id="merge-targets">
-                        {customers.filter((c) => c.id !== selected.id).map((c) => <option key={c.id} value={c.name} label={c.name_en ?? undefined} />)}
-                      </datalist>
+                      <div className="flex-1 min-w-[220px]">
+                        <Combo value={mergeTarget} onChange={setMergeTarget}
+                          placeholder="พิมพ์ค้นหาบริษัทปลายทาง (ตัวที่ถูกต้อง)..."
+                          options={customers.filter((c) => c.id !== selected.id).map((c) => ({ value: c.name, label: c.name_en ?? undefined }))}
+                          className="w-full rounded-lg border border-ice px-3 py-2 text-[12.5px]" />
+                      </div>
                       <button onClick={doMerge} disabled={!customers.some((c) => c.name === mergeTarget && c.id !== selected.id)}
                         className="btn btn-primary text-[12.5px] py-2 px-3.5 disabled:opacity-50">รวมเลย</button>
                       <button onClick={() => setMerging(false)} className="btn btn-outline text-[12.5px] py-2 px-3">ยกเลิก</button>
@@ -1688,9 +1685,8 @@ function CustomersTab() {
                     <div className="mt-2 grid gap-2 sm:grid-cols-2">
                       <div className="sm:col-span-2">
                         <label className="text-[11px] font-bold text-muted">โซลูชันที่สนใจ</label>
-                        <input list="deal-solutions" value={dSolution} onChange={(e) => setDSolution(e.target.value)} placeholder="เช่น AGV Lifter x2 + FMS"
+                        <Combo value={dSolution} onChange={setDSolution} placeholder="เช่น AGV Lifter x2 + FMS" options={SOLUTION_INTERESTS}
                           className="mt-1 w-full rounded-lg border border-ice px-2.5 py-1.5 text-[12.5px]" />
-                        <datalist id="deal-solutions">{SOLUTION_INTERESTS.map((s) => <option key={s} value={s} />)}</datalist>
                       </div>
                       <div>
                         <label className="text-[11px] font-bold text-muted">มูลค่าโดยประมาณ</label>
@@ -1947,7 +1943,7 @@ function SalesAiTab() {
       const j = await callCopilot({
         action: "ask",
         payload: [
-          "คุณคือ AI โค้ชฝ่ายขายของ CONSERTECH (ผู้ขายระบบ AGV/AMR, FMS และอุปกรณ์เซนเซอร์อุตสาหกรรม เช่น LiDAR, Safety Scanner) ช่วยพนักงานขายเตรียมตัว วางกลยุทธ์ ตอบข้อโต้แย้ง และปิดการขาย ตอบกระชับ ใช้ได้จริง เป็นภาษาไทย",
+          "คุณคือ AI โค้ชฝ่ายขายของ CONSERTECH (ที่ปรึกษา/System Integrator ระบบอัตโนมัติอุตสาหกรรมครบวงจร ทั้ง 6 หมวดโซลูชัน และตัวแทนจำหน่ายอุปกรณ์อัตโนมัติหลายแบรนด์ เช่น Siemens, Omron, Mitsubishi, SICK, Loongain, RFID — ไม่ใช่แค่ AGV ให้ยึดฐานความรู้บริษัทใน system prompt และเสนอโอกาสขายให้ครบทุกสายผลิตภัณฑ์ที่ตรงกับปัญหาลูกค้า) ช่วยพนักงานขายเตรียมตัว วางกลยุทธ์ ตอบข้อโต้แย้ง และปิดการขาย ตอบกระชับ ใช้ได้จริง เป็นภาษาไทย",
           ctx,
           history ? `บทสนทนาก่อนหน้า:\n${history}` : "",
           `คำถามล่าสุดจากพนักงานขาย: ${question}`,
@@ -1971,7 +1967,7 @@ function SalesAiTab() {
       const j = await callCopilot({
         action: "ask",
         payload: [
-          `ช่วยร่างอีเมลประเภท "${emType}" สำหรับพนักงานขายของ CONSERTECH (ผู้ขายระบบ AGV/AMR, FMS และอุปกรณ์เซนเซอร์อุตสาหกรรม โทร 062-363-5395, sale01@cs-th.com)`,
+          `ช่วยร่างอีเมลประเภท "${emType}" สำหรับพนักงานขายของ CONSERTECH (ที่ปรึกษา/System Integrator ระบบอัตโนมัติอุตสาหกรรม และตัวแทนจำหน่ายอุปกรณ์อัตโนมัติหลายแบรนด์ — ดูฐานความรู้บริษัทใน system prompt โทร 062-363-5395, sale01@cs-th.com)`,
           ctx || "ยังไม่ได้เลือกลูกค้า — ร่างแบบทั่วไปโดยเว้นช่อง [ชื่อลูกค้า] ให้เติม",
           emContactText ? `เรียนถึงผู้ติดต่อ: ${emContactText} — ใช้ชื่อนี้ขึ้นต้นอีเมล` : "",
           emQuoteRow ? `ใบเสนอราคาที่อ้างถึง: เลขที่ ${emQuoteRow.doc_no} ยอด ${Number(emQuoteRow.total).toLocaleString("th-TH")} บาท ส่งเมื่อ ${new Date(emQuoteRow.created_at).toLocaleDateString("th-TH", { day: "numeric", month: "long", year: "numeric" })} (สถานะ: ${emQuoteRow.status}) — อ้างเลขที่นี้ในอีเมล` : "",
@@ -2006,10 +2002,9 @@ function SalesAiTab() {
         <p className="font-bold text-navy text-[15px]">💬 AI โค้ชฝ่ายขาย <span className="text-[10px] font-bold bg-brand/10 text-brand rounded px-1.5 py-0.5 align-middle">AI จริง</span></p>
         <p className="text-[12px] text-muted mt-0.5">ถามอะไรก็ได้ เช่น เตรียมตัวก่อนเข้าพบ วิธีตอบข้อโต้แย้ง กลยุทธ์ปิดดีล — เลือกลูกค้าแล้ว AI จะใช้ข้อมูลจริงจาก CRM ประกอบ</p>
         <div className="mt-2.5">
-          <input list="ai-customers" value={custText} onChange={(e) => setCustText(e.target.value)}
+          <Combo value={custText} onChange={setCustText} options={customers.map((c) => c.name)}
             placeholder="🔍 เลือกลูกค้า (พิมพ์ค้นหา — ไม่บังคับ)"
             className={`w-full rounded-lg border px-3 py-2 text-[12.5px] ${custText && customers.some((c) => c.name === custText) ? "border-brand/50 bg-ice/30" : "border-ice"}`} />
-          <datalist id="ai-customers">{customers.map((c) => <option key={c.id} value={c.name} />)}</datalist>
           {custText && customers.some((c) => c.name === custText) && (
             <p className="text-[10.5px] text-brand mt-0.5">✓ AI เห็นข้อมูล {custText}: ผู้ติดต่อ ดีล และกิจกรรมล่าสุดทั้งหมด</p>
           )}
@@ -2062,19 +2057,16 @@ function SalesAiTab() {
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="text-[11px] font-bold text-muted">ลูกค้า (พิมพ์ค้นหา)</label>
-              <input list="ai-customers" value={emCustText}
-                onChange={(e) => { setEmCustText(e.target.value); setEmContactText(""); setEmQuote(""); }}
+              <Combo value={emCustText} options={customers.map((c) => c.name)}
+                onChange={(v) => { setEmCustText(v); setEmContactText(""); setEmQuote(""); }}
                 placeholder="ชื่อบริษัท..."
                 className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[12.5px]" />
             </div>
             <div>
               <label className="text-[11px] font-bold text-muted">ผู้ติดต่อ (เรียนถึงใคร)</label>
-              <input list="ai-em-contacts" value={emContactText} onChange={(e) => setEmContactText(e.target.value)}
+              <Combo value={emContactText} onChange={setEmContactText} options={(emContacts.length ? emContacts : contacts).map((c) => c.name)}
                 placeholder="พิมพ์ค้นหาผู้ติดต่อ..."
                 className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[12.5px]" />
-              <datalist id="ai-em-contacts">
-                {(emContacts.length ? emContacts : contacts).map((c, i) => <option key={i} value={c.name} />)}
-              </datalist>
             </div>
           </div>
           {isQuoteFollowup && (

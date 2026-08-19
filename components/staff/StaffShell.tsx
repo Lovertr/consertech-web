@@ -191,7 +191,7 @@ export default function StaffShell({ children, title }: { children: ReactNode; t
 
   return (
     <DeptCtx.Provider value={{ dept, empId, access }}>
-      <div className="min-h-[85vh] bg-ice/40">
+      <div className="min-h-[85vh] bg-ice/40 overflow-x-hidden [overflow-wrap:anywhere]">
         <div className="container-site py-4 min-[820px]:py-6 grid gap-4 min-[820px]:gap-6 min-[820px]:grid-cols-[230px_1fr] items-start">
           {/* Sidebar — มือถือ: แถบชิปเลื่อนแนวนอน / จอใหญ่: เมนูแนวตั้ง */}
           <aside className="min-w-0 max-w-full card-white p-2.5 min-[820px]:p-4 min-[820px]:sticky min-[820px]:top-24">
