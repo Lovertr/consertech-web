@@ -811,6 +811,7 @@ type DbQuoteLite = { id: number; doc_no: string; customer_name: string; total: n
 type DbCustDoc = { id: number; customer_id: number; doc_type: string; doc_no: string | null; title: string; amount: number | null; doc_date: string | null; file_url: string | null; note: string | null; created_by: string | null; created_at: string };
 const DOC_TYPES = ["ใบสั่งซื้อ (PO)", "สัญญา", "ใบส่งมอบงาน", "ใบแจ้งหนี้ / ใบเสร็จ", "อื่นๆ"];
 type DbBranch = { id: number; customer_id: number; label: string | null; address: string | null; subdistrict: string | null; district: string | null; province: string | null; postcode: string | null; phone: string | null; note: string | null };
+type DbCalEvent = { id: number; title: string; event_type: string; event_date: string; event_time: string | null; location: string | null; customer_id: number | null; contact_id: number | null; attendees: string[]; created_by: string | null; notes: string | null };
 
 function CustomersTab() {
   const { access, empId } = useDept();
@@ -836,6 +837,8 @@ function CustomersTab() {
   const [editContactId, setEditContactId] = useState<number | null>(null);
   const [merging, setMerging] = useState(false);
   const [mergeTarget, setMergeTarget] = useState("");
+  // กิจกรรมในปฏิทินที่ผูกกับลูกค้า
+  const [calEvents, setCalEvents] = useState<DbCalEvent[]>([]);
   // สาขา/ที่อยู่อื่นๆ ของลูกค้า
   const [branches, setBranches] = useState<DbBranch[]>([]);
   const [brAdding, setBrAdding] = useState(false);
@@ -876,6 +879,8 @@ function CustomersTab() {
     setCustDocs((cd.data as DbCustDoc[]) ?? []);
     const { data: brs } = await supabase.from("customer_branches").select("*").order("created_at");
     setBranches((brs as DbBranch[]) ?? []);
+    const { data: cev } = await supabase.from("calendar_events").select("id,title,event_type,event_date,event_time,location,customer_id,contact_id,attendees,created_by,notes").not("customer_id", "is", null).order("event_date", { ascending: false }).order("event_time");
+    setCalEvents((cev as DbCalEvent[]) ?? []);
     setEmps((e.data as { id: string; name: string }[]) ?? []);
     const list = (c.data as DbCustomerFull[]) ?? [];
     setCustomers(list);
@@ -907,6 +912,8 @@ function CustomersTab() {
   }) : [];
   const selDocs = selected ? custDocs.filter((d) => d.customer_id === selected.id) : [];
   const selBranches = selected ? branches.filter((b) => b.customer_id === selected.id) : [];
+  const selEvents = selected ? calEvents.filter((e) => e.customer_id === selected.id) : [];
+  const todayIso = new Date().toISOString().slice(0, 10);
   const list = customers.filter((c) =>
     (!provFilter || c.province === provFilter) &&
     (!indFilter || c.industry === indFilter) &&
@@ -1719,6 +1726,40 @@ function CustomersTab() {
                     </div>
                   ))}
                   {selDeals.length === 0 && <p className="text-[12.5px] text-muted/70">ยังไม่มีดีลกับบริษัทนี้ — สร้างได้ที่แท็บ Pipeline ดีล</p>}
+                </div>
+              </div>
+
+              {/* กิจกรรมในปฏิทินกับบริษัทนี้ */}
+              <div className="card-white p-5">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-bold text-navy text-[14.5px]">📅 กิจกรรมกับบริษัทนี้ <span className="text-sky text-[12px]">({selEvents.length})</span></p>
+                  <Link href="/staff/calendar" className="text-[12px] font-semibold text-sky hover:text-brand">เปิดปฏิทิน / วางแผนใหม่ →</Link>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {[...selEvents.filter((e) => e.event_date >= todayIso).sort((a, b) => a.event_date.localeCompare(b.event_date)), ...selEvents.filter((e) => e.event_date < todayIso)].map((e) => {
+                    const upcoming = e.event_date >= todayIso;
+                    const ct = contacts.find((c) => c.id === e.contact_id);
+                    return (
+                      <div key={e.id} className={`flex flex-wrap items-start gap-2 rounded-xl border p-3 text-[12.5px] ${upcoming ? "border-brand/30 bg-ice/20" : "border-ice opacity-75"}`}>
+                        <div className="shrink-0 text-center rounded-lg bg-white border border-ice px-2 py-1 min-w-[52px]">
+                          <p className="text-[10px] text-muted leading-none">{new Date(e.event_date + "T00:00:00").toLocaleDateString("th-TH", { month: "short" })}</p>
+                          <p className="text-[15px] font-bold text-navy leading-tight">{Number(e.event_date.slice(-2))}</p>
+                          {e.event_time && <p className="text-[10px] text-brand font-semibold leading-none">{e.event_time}</p>}
+                        </div>
+                        <div className="flex-1 min-w-[160px]">
+                          <p className="font-bold text-navy leading-snug">{e.title}</p>
+                          <p className="text-[11px] text-muted/80 mt-0.5">
+                            <span className="font-bold bg-ice text-sky rounded px-1.5 py-0.5 mr-1">{e.event_type}</span>
+                            {[ct && `👤 ${ct.name}`, e.location && `📍 ${e.location}`, (e.attendees ?? []).length > 0 && `👥 ${e.attendees.map(empName).join(", ")}`].filter(Boolean).join(" · ")}
+                          </p>
+                          {e.notes && <p className="text-[11px] text-ink mt-1 bg-white rounded px-2 py-1 border border-ice">{e.notes}</p>}
+                        </div>
+                        {upcoming && <span className="text-[10px] font-bold bg-amber/15 text-[#9A6A10] rounded px-1.5 py-0.5 shrink-0">กำลังจะถึง</span>}
+                        {!upcoming && <span className="text-[10px] font-bold bg-ice text-muted rounded px-1.5 py-0.5 shrink-0">ผ่านแล้ว</span>}
+                      </div>
+                    );
+                  })}
+                  {selEvents.length === 0 && <p className="text-[12.5px] text-muted/70">ยังไม่มีกิจกรรมที่ผูกกับบริษัทนี้ — วางแผนได้ที่หน้าปฏิทิน (เลือกลูกค้าจากรายการเพื่อให้ผูกกัน)</p>}
                 </div>
               </div>
               </>

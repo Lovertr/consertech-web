@@ -249,14 +249,20 @@ function CalendarBody() {
               <input list="cal-customers" value={fCustText}
                 onChange={(e) => {
                   const v = e.target.value; setFCustText(v);
-                  const hit = customers.find((c) => c.name === v);
+                  // จับคู่แบบยืดหยุ่น: ตรงเป๊ะ → ไม่สนตัวพิมพ์/ช่องว่าง → ถ้าพิมพ์แล้วเหลือตัวเดียวที่ขึ้นต้นตรงกัน
+                  const nz = (s: string) => s.toLowerCase().replace(/\s+/g, "");
+                  const hit = customers.find((c) => c.name === v)
+                    ?? customers.find((c) => nz(c.name) === nz(v))
+                    ?? (v.trim().length >= 3 ? (() => { const m = customers.filter((c) => nz(c.name).startsWith(nz(v))); return m.length === 1 ? m[0] : undefined; })() : undefined);
                   setFCust(hit?.id ?? null);
                   if (!hit) { setFContact(null); setFContactText(""); }
                 }}
+                onBlur={() => { const c = customers.find((x) => x.id === fCust); if (c && fCustText !== c.name) setFCustText(c.name); }}
                 placeholder="พิมพ์ชื่อบริษัท..."
-                className={`mt-1 w-full rounded-lg border px-3 py-2 text-[13px] ${fCustText && fCust === null ? "border-amber/60" : "border-ice"}`} />
+                className={`mt-1 w-full rounded-lg border px-3 py-2 text-[13px] ${fCustText && fCust === null ? "border-[#D94141]/60 bg-[#D94141]/5" : fCust !== null ? "border-[#2E9E5B]/60" : "border-ice"}`} />
               <datalist id="cal-customers">{customers.map((c) => <option key={c.id} value={c.name} />)}</datalist>
-              {fCustText && fCust === null && <p className="text-[10.5px] text-amber mt-0.5">ยังไม่ตรงกับลูกค้าในระบบ — เลือกจากรายการเพื่อผูกข้อมูล</p>}
+              {fCustText && fCust === null && <p className="text-[10.5px] text-[#D94141] font-semibold mt-0.5">⚠ ยังไม่ผูกกับลูกค้าในระบบ — เลือกชื่อจากรายการ ไม่งั้นชื่อลูกค้าจะไม่แสดงบนปฏิทิน</p>}
+              {fCust !== null && <p className="text-[10.5px] text-[#2E9E5B] mt-0.5">✓ ผูกกับ {custName(fCust)}</p>}
             </div>
             {fCust !== null && (
               <div>
