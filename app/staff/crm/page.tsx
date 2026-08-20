@@ -12,6 +12,7 @@ import { THAI_INDUSTRIES, SOLUTION_INTERESTS } from "@/lib/industries";
 import { supabase } from "@/lib/supabase";
 import { callCopilot } from "@/lib/copilot";
 import Combo from "@/components/staff/Combo";
+import DbdLookup, { validThaiId, type DbdResult } from "@/components/staff/DbdLookup";
 
 // ── Types (ตรงกับตารางใน Supabase) ──
 type DbDeal = {
@@ -938,6 +939,23 @@ function CustomersTab() {
       : `✅ บริษัทมีอยู่แล้ว — เพิ่ม "${r.contactName ?? "ผู้ติดต่อ"}" เป็นผู้ติดต่อของ ${r.companyName}`) + affMsg;
   };
 
+  // เติมข้อมูลจากผลค้นหา DBD ลงฟอร์มเพิ่มลูกค้า
+  const applyDbd = (r: DbdResult) => {
+    setEdit((e) => ({
+      ...e,
+      name: e.name || r.name_th || r.name_en,
+      name_en: e.name_en || r.name_en,
+      tax_id: r.tax_id || e.tax_id,
+      address: r.address || e.address,
+      subdistrict: r.subdistrict || e.subdistrict,
+      district: r.district || e.district,
+      province: r.province || e.province,
+      postcode: r.postcode || e.postcode,
+      note: e.note || (r.status ? `สถานะ DBD: ${r.status}${r.register_date ? ` · จดทะเบียน ${r.register_date}` : ""}${r.capital ? ` · ทุน ${Number(String(r.capital).replace(/[^0-9.]/g, "")).toLocaleString("th-TH")} บ.` : ""}` : e.note),
+    }));
+    setMsg("✅ กรอกข้อมูลจาก DBD แล้ว — ตรวจสอบและปรับแก้ได้ก่อนบันทึก");
+  };
+
   const addCustomer = async () => {
     if (!supabase || !String(edit.name ?? "").trim()) return;
     const newNorms = [normCompany(String(edit.name)), edit.name_en ? normCompany(String(edit.name_en)) : ""].filter(Boolean);
@@ -1328,7 +1346,9 @@ function CustomersTab() {
         </div>
       </div>
       <div>
-        <label className="text-[11.5px] font-bold text-muted">Tax ID (เลขผู้เสียภาษี)</label>
+        <label className="text-[11.5px] font-bold text-muted">Tax ID (เลขผู้เสียภาษี)
+          {(() => { const t = String(edit.tax_id ?? "").replace(/[^0-9]/g, ""); if (!t) return null; return t.length === 13 && validThaiId(t) ? <span className="ml-1.5 text-[10.5px] font-bold text-[#2E9E5B]">✓ เลขถูกต้อง</span> : <span className="ml-1.5 text-[10.5px] font-bold text-amber">⚠ ตรวจสอบเลข ({t.length}/13 หลัก)</span>; })()}
+        </label>
         <input value={String(edit.tax_id ?? "")} onChange={(e) => setEdit({ ...edit, tax_id: e.target.value })} disabled={readOnly}
           placeholder="13 หลัก — ใช้เติมในใบเสนอราคาอัตโนมัติ" className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[13px]" />
       </div>
@@ -1449,7 +1469,8 @@ function CustomersTab() {
         <div className="space-y-4 min-w-0">
           {adding ? (
             <div className="card-white p-5">
-              <p className="font-bold text-navy text-[15px] mb-3">เพิ่มลูกค้าใหม่ (กรอกเอง)</p>
+              <p className="font-bold text-navy text-[15px] mb-3">เพิ่มลูกค้าใหม่</p>
+              {!readOnly && <DbdLookup onPick={applyDbd} />}
               {editForm(true)}
             </div>
           ) : selected ? (
