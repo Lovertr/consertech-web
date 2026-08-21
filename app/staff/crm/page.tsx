@@ -1911,6 +1911,7 @@ function CustomersTab() {
 // ── ✨ AI ช่วยขาย — โค้ชเตรียมเข้าพบ (แชท) + ร่าง Email Marketing ──
 const EMAIL_TYPES = [
   "แนะนำบริษัท + ขอเข้าพบ (ครั้งแรก)",
+  "Telesales — เปิดการขาย / แนะนำตัวสั้นๆ",
   "Follow-up ใบเสนอราคา",
   "ขอบคุณหลังเข้าพบ / ประชุม",
   "นัดหมาย Site Survey / เดโม",
@@ -1999,6 +2000,7 @@ function SalesAiTab() {
   };
 
   const isQuoteFollowup = emType === "Follow-up ใบเสนอราคา";
+  const isTelesales = emType === "Telesales — เปิดการขาย / แนะนำตัวสั้นๆ";
   const emQuoteRow = quotes.find((x) => x.doc_no === emQuote) ?? null;
 
   const draftEmail = async () => {
@@ -2009,6 +2011,13 @@ function SalesAiTab() {
         action: "ask",
         payload: [
           `ช่วยร่างอีเมลประเภท "${emType}" สำหรับพนักงานขายของ CONSERTECH (ที่ปรึกษา/System Integrator ระบบอัตโนมัติอุตสาหกรรม และตัวแทนจำหน่ายอุปกรณ์อัตโนมัติหลายแบรนด์ — ดูฐานความรู้บริษัทใน system prompt โทร 062-363-5395, sale01@cs-th.com)`,
+          isTelesales ? [
+            "บริบท: อีเมลนี้ใช้โดยทีม Telesales — อาจส่ง 'ก่อนโทร' เพื่อเปิดตัว หรือส่ง 'หลังโทรคุยสั้นๆ' เพื่อสรุปและส่งไม้ต่อ",
+            "จุดประสงค์: เปิดการขาย + สร้างความสนใจ + ขอช่องทางให้ Sales Engineer ติดต่อกลับ — ไม่ใช่ปิดการขายทางอีเมล",
+            "โทน: กระชับ อ่านจบใน 15 วินาที เป็นกันเองแต่มืออาชีพ ไม่ยัดเยียด",
+            "เนื้อหา: แนะนำสั้นๆ ว่า CONSERTECH จำหน่ายเซนเซอร์และอุปกรณ์ควบคุมในงานอุตสาหกรรม (เช่น SICK, Omron, Siemens, Mitsubishi, RFID) รวมถึงระบบอัตโนมัติและ AGV, บอกประโยชน์ที่ลูกค้าจะได้ 1-2 ข้อ, แล้วปิดท้ายด้วย CTA เบาๆ เช่น ขอเวลาคุยสั้นๆ 10-15 นาที หรือให้ Sales Engineer โทร/อีเมลกลับ",
+            "อีเมลต้องสั้น (ไทยไม่เกิน ~120 คำ) เว้นช่อง [ชื่อผู้ส่ง]/[เบอร์โทร] ให้เติมถ้าไม่มีข้อมูล",
+          ].join("\n") : "",
           ctx || "ยังไม่ได้เลือกลูกค้า — ร่างแบบทั่วไปโดยเว้นช่อง [ชื่อลูกค้า] ให้เติม",
           emContactText ? `เรียนถึงผู้ติดต่อ: ${emContactText} — ใช้ชื่อนี้ขึ้นต้นอีเมล` : "",
           emQuoteRow ? `ใบเสนอราคาที่อ้างถึง: เลขที่ ${emQuoteRow.doc_no} ยอด ${Number(emQuoteRow.total).toLocaleString("th-TH")} บาท ส่งเมื่อ ${new Date(emQuoteRow.created_at).toLocaleDateString("th-TH", { day: "numeric", month: "long", year: "numeric" })} (สถานะ: ${emQuoteRow.status}) — อ้างเลขที่นี้ในอีเมล` : "",
