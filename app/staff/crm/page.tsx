@@ -41,12 +41,32 @@ const fmtD = (iso: string) => new Date(iso).toLocaleDateString("th-TH", { day: "
 const fmtDT = (iso: string) =>
   new Date(iso).toLocaleString("th-TH", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
+// escape ตัวอักษรควบคุม (ขึ้นบรรทัด/แท็บ) ที่อยู่ "ภายในสตริง" ของ JSON — โมเดลบางตัว (เช่น Sonnet)
+// เขียนเนื้อหาอีเมลหลายบรรทัดโดยใส่ newline ดิบใน "body" ซึ่งทำให้ JSON.parse ล้มเหลว
+function sanitizeJsonControls(s: string): string {
+  let out = ""; let inStr = false; let esc = false;
+  for (const ch of s) {
+    if (esc) { out += ch; esc = false; continue; }
+    if (ch === "\\") { out += ch; esc = true; continue; }
+    if (ch === '"') { inStr = !inStr; out += ch; continue; }
+    if (inStr) {
+      if (ch === "\n") { out += "\\n"; continue; }
+      if (ch === "\r") { out += "\\r"; continue; }
+      if (ch === "\t") { out += "\\t"; continue; }
+    }
+    out += ch;
+  }
+  return out;
+}
 function parseJsonLoose(raw: string): Record<string, unknown> | null {
   let s = raw.trim();
   if (s.startsWith("```")) s = s.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
   const m = s.match(/\{[\s\S]*\}/);
   if (!m) return null;
-  try { return JSON.parse(m[0]); } catch { return null; }
+  const body = m[0];
+  try { return JSON.parse(body); } catch { /* try sanitized */ }
+  try { return JSON.parse(sanitizeJsonControls(body)); } catch { /* try trailing-comma strip */ }
+  try { return JSON.parse(sanitizeJsonControls(body).replace(/,\s*([}\]])/g, "$1")); } catch { return null; }
 }
 
 // ── AI สรุปดีล (เรียก edge function จริง) ──
