@@ -1912,12 +1912,34 @@ function CustomersTab() {
 const EMAIL_TYPES = [
   "แนะนำบริษัท + ขอเข้าพบ (ครั้งแรก)",
   "Telesales — เปิดการขาย / แนะนำตัวสั้นๆ",
+  "Telesales — ส่งเอกสารแนะนำบริษัท/สินค้า (หลังโทรเปิด)",
+  "Telesales — ติดตามความคืบหน้า (Follow-up)",
   "Follow-up ใบเสนอราคา",
   "ขอบคุณหลังเข้าพบ / ประชุม",
   "นัดหมาย Site Survey / เดโม",
   "ฟื้นความสัมพันธ์ลูกค้าเงียบหาย",
   "แจ้งข่าวสาร / โปรโมชั่นสินค้า",
 ] as const;
+
+const SCRIPT_TYPES = [
+  "Telesales — เปิดสาย + เก็บข้อมูล → ส่ง Sales Engineer",
+  "โทรแนะนำบริษัทครั้งแรก (Cold Call)",
+  "โทรตามใบเสนอราคา",
+  "โทรนัดหมาย / ยืนยันนัด Site Survey · เดโม",
+  "โทรฟื้นลูกค้าเงียบหาย",
+  "โทรแจ้งโปรโมชั่น / สินค้าใหม่",
+] as const;
+
+type ScriptData = {
+  title: string;
+  opening: string;
+  discover: string[];
+  pitch: string;
+  objections: { o: string; r: string }[];
+  closing: string;
+  voicemail: string;
+  tips: string[];
+};
 
 function SalesAiTab() {
   const [customers, setCustomers] = useState<{ id: number; name: string; industry: string | null; province: string | null; note: string | null }[]>([]);
@@ -1940,6 +1962,14 @@ function SalesAiTab() {
   const [emView, setEmView] = useState<"th" | "en">("th");
   const [emBusy, setEmBusy] = useState(false);
   const [emErr, setEmErr] = useState("");
+  // สคริปต์โทร
+  const [scCustText, setScCustText] = useState("");
+  const [scContactText, setScContactText] = useState("");
+  const [scType, setScType] = useState<string>(SCRIPT_TYPES[0]);
+  const [scExtra, setScExtra] = useState("");
+  const [scData, setScData] = useState<ScriptData | null>(null);
+  const [scBusy, setScBusy] = useState(false);
+  const [scErr, setScErr] = useState("");
 
   useEffect(() => {
     if (!supabase) return;
@@ -2000,7 +2030,7 @@ function SalesAiTab() {
   };
 
   const isQuoteFollowup = emType === "Follow-up ใบเสนอราคา";
-  const isTelesales = emType === "Telesales — เปิดการขาย / แนะนำตัวสั้นๆ";
+  const isTelesales = emType.startsWith("Telesales");
   const emQuoteRow = quotes.find((x) => x.doc_no === emQuote) ?? null;
 
   const draftEmail = async () => {
@@ -2012,12 +2042,18 @@ function SalesAiTab() {
         payload: [
           `ช่วยร่างอีเมลประเภท "${emType}" สำหรับพนักงานขายของ CONSERTECH (ที่ปรึกษา/System Integrator ระบบอัตโนมัติอุตสาหกรรม และตัวแทนจำหน่ายอุปกรณ์อัตโนมัติหลายแบรนด์ — ดูฐานความรู้บริษัทใน system prompt โทร 062-363-5395, sale01@cs-th.com)`,
           isTelesales ? [
-            "บริบท: อีเมลนี้ใช้โดยทีม Telesales — อาจส่ง 'ก่อนโทร' เพื่อเปิดตัว หรือส่ง 'หลังโทรคุยสั้นๆ' เพื่อสรุปและส่งไม้ต่อ",
-            "จุดประสงค์: เปิดการขาย + สร้างความสนใจ + ขอช่องทางให้ Sales Engineer ติดต่อกลับ — ไม่ใช่ปิดการขายทางอีเมล",
-            "โทน: กระชับ อ่านจบใน 15 วินาที เป็นกันเองแต่มืออาชีพ ไม่ยัดเยียด",
-            "เนื้อหา: แนะนำสั้นๆ ว่า CONSERTECH จำหน่ายเซนเซอร์และอุปกรณ์ควบคุมในงานอุตสาหกรรม (เช่น SICK, Omron, Siemens, Mitsubishi, RFID) รวมถึงระบบอัตโนมัติและ AGV, บอกประโยชน์ที่ลูกค้าจะได้ 1-2 ข้อ, แล้วปิดท้ายด้วย CTA เบาๆ เช่น ขอเวลาคุยสั้นๆ 10-15 นาที หรือให้ Sales Engineer โทร/อีเมลกลับ",
-            "อีเมลต้องสั้น (ไทยไม่เกิน ~120 คำ) เว้นช่อง [ชื่อผู้ส่ง]/[เบอร์โทร] ให้เติมถ้าไม่มีข้อมูล",
-          ].join("\n") : "",
+            "บริบท: อีเมลนี้ใช้โดยทีม Telesales ของ CONSERTECH ซึ่งจำหน่ายเซนเซอร์และอุปกรณ์ควบคุมในงานอุตสาหกรรม (เช่น SICK, Omron, Siemens, Mitsubishi, RFID) รวมถึงระบบอัตโนมัติและ AGV",
+            "หลักการรวม: เป็นกันเองแต่มืออาชีพ กระชับ ไม่ยัดเยียด และจุดประสงค์คือประคองความสัมพันธ์+ส่งไม้ต่อให้ Sales Engineer ไม่ใช่ปิดการขายทางอีเมล เว้นช่อง [ชื่อผู้ส่ง]/[เบอร์โทร] ให้เติมถ้าไม่มีข้อมูล",
+            emType === "Telesales — เปิดการขาย / แนะนำตัวสั้นๆ"
+              ? "งานนี้: อีเมลเปิดตัวสั้นๆ (ก่อน/หลังโทรครั้งแรก) — แนะนำบริษัทสั้นๆ บอกประโยชน์ 1-2 ข้อ ปิดท้ายด้วย CTA เบาๆ เช่น ขอเวลาคุย 10-15 นาที. อีเมลต้องสั้น (ไทยไม่เกิน ~120 คำ)"
+              : "",
+            emType === "Telesales — ส่งเอกสารแนะนำบริษัท/สินค้า (หลังโทรเปิด)"
+              ? "งานนี้: อีเมลส่ง 'หลังจากโทรเปิดสายคุยแล้ว' เพื่อส่งเอกสารแนะนำบริษัทและสินค้าตามที่คุยไว้. ให้ขึ้นต้นด้วยการขอบคุณที่สละเวลาคุยทางโทรศัพท์, ทวนสั้นๆ ว่าคุยเรื่องอะไร/สนใจอะไร, บอกว่าแนบ 'เอกสารแนะนำบริษัท (Company Profile) และแคตตาล็อกสินค้า' มาให้ (เขียนในรูปแบบ [แนบไฟล์: ...] เพื่อให้ผู้ส่งแนบเอง), สรุปจุดเด่นที่ตรงกับความต้องการลูกค้า 2-3 ข้อ, แล้วปิดด้วยขั้นถัดไปว่าจะให้ Sales Engineer ติดต่อเพื่อคุยรายละเอียด/ทำใบเสนอราคา. ความยาวปานกลาง"
+              : "",
+            emType === "Telesales — ติดตามความคืบหน้า (Follow-up)"
+              ? "งานนี้: อีเมลติดตามความคืบหน้าหลังส่งข้อมูล/คุยไปแล้วสักระยะ (ลูกค้ายังเงียบหรือกำลังพิจารณา). ให้โทนสุภาพ ไม่กดดัน, อ้างถึงการติดต่อครั้งก่อนสั้นๆ, ถามความคืบหน้า/มีข้อสงสัยเพิ่มไหม, เสนอความช่วยเหลือ (เช่น ขอนัดเดโม/ให้ Sales Engineer โทรอธิบาย), และให้ช่องทางติดต่อกลับง่ายๆ. อีเมลสั้น (ไทยไม่เกิน ~120 คำ)"
+              : "",
+          ].filter(Boolean).join("\n") : "",
           ctx || "ยังไม่ได้เลือกลูกค้า — ร่างแบบทั่วไปโดยเว้นช่อง [ชื่อลูกค้า] ให้เติม",
           emContactText ? `เรียนถึงผู้ติดต่อ: ${emContactText} — ใช้ชื่อนี้ขึ้นต้นอีเมล` : "",
           emQuoteRow ? `ใบเสนอราคาที่อ้างถึง: เลขที่ ${emQuoteRow.doc_no} ยอด ${Number(emQuoteRow.total).toLocaleString("th-TH")} บาท ส่งเมื่อ ${new Date(emQuoteRow.created_at).toLocaleDateString("th-TH", { day: "numeric", month: "long", year: "numeric" })} (สถานะ: ${emQuoteRow.status}) — อ้างเลขที่นี้ในอีเมล` : "",
@@ -2044,6 +2080,59 @@ function SalesAiTab() {
   const emCustId = customers.find((c) => c.name === emCustText)?.id ?? null;
   const emContacts = emCustId !== null ? contacts.filter((c) => c.customer_id === emCustId) : [];
   const emQuotes = emCustText ? quotes.filter((x) => x.customer_name === emCustText) : quotes;
+
+  const scCustId = customers.find((c) => c.name === scCustText)?.id ?? null;
+  const scContacts = scCustId !== null ? contacts.filter((c) => c.customer_id === scCustId) : [];
+
+  const genScript = async () => {
+    setScBusy(true); setScErr(""); setScData(null);
+    try {
+      const ctx = scCustText ? contextFor(scCustText) : "";
+      const j = await callCopilot({
+        action: "ask",
+        payload: [
+          `ช่วยเขียนสคริปต์บทพูดสำหรับ "โทรศัพท์หาลูกค้า" ให้พนักงานขาย/Telesales ของ CONSERTECH (ที่ปรึกษา/System Integrator ระบบอัตโนมัติอุตสาหกรรม และตัวแทนจำหน่ายเซนเซอร์+อุปกรณ์ควบคุมหลายแบรนด์ เช่น SICK, Omron, Siemens, Mitsubishi, Loongain, RFID รวมถึงระบบอัตโนมัติและ AGV — ยึดฐานความรู้บริษัทใน system prompt)`,
+          `ประเภทการโทร: "${scType}"`,
+          scType.startsWith("Telesales")
+            ? "จุดประสงค์: เปิดสาย สร้างความสนใจ และเก็บข้อมูลเบื้องต้น (ใช้เครื่องจักร/สายการผลิตอะไร มีปัญหาอะไร ใครเป็นผู้ตัดสินใจ งบ/ช่วงเวลา) เพื่อส่งต่อให้ Sales Engineer — ไม่ใช่ปิดการขายทางโทรศัพท์"
+            : "จุดประสงค์: บรรลุเป้าหมายของการโทรประเภทนี้อย่างเป็นธรรมชาติ และนำไปสู่ขั้นถัดไปที่ชัดเจน",
+          ctx || "ยังไม่ได้เลือกลูกค้า — เขียนแบบทั่วไป เว้นช่อง [ชื่อลูกค้า]/[ชื่อบริษัท] ให้เติม",
+          scContactText ? `ผู้ที่จะคุยด้วย: ${scContactText}` : "",
+          scExtra ? `คำสั่งเพิ่มเติมจากพนักงาน: ${scExtra}` : "",
+          "เขียนเป็นบทพูดจริงที่เป็นธรรมชาติแบบคนไทยคุยโทรศัพท์ สุภาพ ไม่แข็ง ไม่ท่องจำ อ่านแล้วพูดตามได้เลย",
+          `ตอบเป็น JSON เท่านั้น ห้ามมีข้อความอื่น รูปแบบ: {"title":"ชื่อสคริปต์สั้นๆ","opening":"บทเปิดสาย (พูดจริง 2-4 ประโยค แนะนำตัว+บริษัท+เหตุผลที่โทร)","discover":["คำถามเก็บข้อมูล/ค้นหาความต้องการ ข้อ1","ข้อ2","ข้อ3","ข้อ4"],"pitch":"ช่วงนำเสนอคุณค่าสั้นๆ ให้เชื่อมกับสิ่งที่ลูกค้าตอบ","objections":[{"o":"ข้อโต้แย้งที่ลูกค้ามักพูด","r":"วิธีตอบ (พูดจริง)"},{"o":"...","r":"..."}],"closing":"บทปิดสาย + ขั้นถัดไป (เช่น ขอนัด/ขออีเมลให้ Sales Engineer ติดต่อ)","voicemail":"ข้อความสั้นๆ ถ้าลูกค้าไม่รับสายหรือฝากข้อความ","tips":["เคล็ดลับใช้สคริปต์ ข้อ1","ข้อ2","ข้อ3"]}`,
+        ].filter(Boolean).join("\n\n").slice(0, 13500),
+      });
+      const p = parseJsonLoose(String(j.text ?? "")) as Partial<ScriptData> | null;
+      if (!p?.opening || !p?.closing) throw new Error("AI ตอบรูปแบบไม่ถูกต้อง — กดสร้างใหม่อีกครั้ง");
+      setScData({
+        title: p.title ?? scType,
+        opening: p.opening,
+        discover: Array.isArray(p.discover) ? p.discover : [],
+        pitch: p.pitch ?? "",
+        objections: Array.isArray(p.objections) ? p.objections.filter((x) => x && x.o && x.r) : [],
+        closing: p.closing,
+        voicemail: p.voicemail ?? "",
+        tips: Array.isArray(p.tips) ? p.tips : [],
+      });
+    } catch (e) {
+      setScErr(String((e as Error).message ?? e));
+    } finally {
+      setScBusy(false);
+    }
+  };
+
+  const scriptPlainText = (s: ScriptData): string => [
+    `📞 ${s.title}`,
+    ``,
+    `【 เปิดสาย 】\n${s.opening}`,
+    s.discover.length ? `\n【 คำถามเก็บข้อมูล 】\n${s.discover.map((d, i) => `${i + 1}. ${d}`).join("\n")}` : "",
+    s.pitch ? `\n【 นำเสนอคุณค่า 】\n${s.pitch}` : "",
+    s.objections.length ? `\n【 รับมือข้อโต้แย้ง 】\n${s.objections.map((o) => `- ลูกค้า: ${o.o}\n  เรา: ${o.r}`).join("\n")}` : "",
+    `\n【 ปิดสาย / ขั้นถัดไป 】\n${s.closing}`,
+    s.voicemail ? `\n【 ฝากข้อความ (ไม่รับสาย) 】\n${s.voicemail}` : "",
+    s.tips.length ? `\n💡 เคล็ดลับ\n${s.tips.map((t) => `• ${t}`).join("\n")}` : "",
+  ].filter(Boolean).join("\n");
 
   return (
     <div className="grid gap-5 min-[1100px]:grid-cols-2 items-start">
@@ -2177,6 +2266,107 @@ function SalesAiTab() {
                   {emData.tips.map((t, i) => (
                     <p key={i} className="text-[12.5px] text-ink leading-relaxed">• {t}</p>
                   ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* AI ร่างสคริปต์โทร */}
+      <div className="card-white p-5 min-w-0 min-[1100px]:col-span-2">
+        <p className="font-bold text-navy text-[15px]">📞 AI ร่างสคริปต์โทรหาลูกค้า <span className="text-[10px] font-bold bg-brand/10 text-brand rounded px-1.5 py-0.5 align-middle">AI จริง</span></p>
+        <p className="text-[12px] text-muted mt-0.5">เลือกรูปแบบการโทร แล้ว AI จะเขียนบทพูดให้ครบ ตั้งแต่เปิดสาย คำถามเก็บข้อมูล รับมือข้อโต้แย้ง จนถึงปิดสาย — เลือกลูกค้าเพื่อให้ AI ใช้ข้อมูลจริงจาก CRM</p>
+        <div className="mt-3 space-y-2.5">
+          <div className="flex flex-wrap gap-1.5">
+            {SCRIPT_TYPES.map((t) => (
+              <button key={t} onClick={() => setScType(t)}
+                className={`text-[11.5px] font-semibold rounded-lg px-2.5 py-1.5 border transition ${scType === t ? "bg-brand text-white border-brand" : "bg-white border-ice text-muted hover:border-brand"}`}>
+                {t}
+              </button>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-[11px] font-bold text-muted">ลูกค้า (พิมพ์ค้นหา — ไม่บังคับ)</label>
+              <Combo value={scCustText} options={customers.map((c) => c.name)}
+                onChange={(v) => { setScCustText(v); setScContactText(""); }}
+                placeholder="ชื่อบริษัท..."
+                className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[12.5px]" />
+            </div>
+            <div>
+              <label className="text-[11px] font-bold text-muted">ผู้ที่จะคุยด้วย (ไม่บังคับ)</label>
+              <Combo value={scContactText} onChange={setScContactText} options={(scContacts.length ? scContacts : contacts).map((c) => c.name)}
+                placeholder="พิมพ์ค้นหาผู้ติดต่อ..."
+                className="mt-1 w-full rounded-lg border border-ice px-3 py-2 text-[12.5px]" />
+            </div>
+          </div>
+          <input value={scExtra} onChange={(e) => setScExtra(e.target.value)}
+            placeholder="คำสั่งเพิ่มเติม (ไม่บังคับ) เช่น เน้นขายเซนเซอร์ SICK / ลูกค้าโรงงานอาหาร / น้ำเสียงเป็นกันเอง"
+            className="w-full rounded-lg border border-ice px-3 py-2 text-[12.5px]" />
+          <button onClick={genScript} disabled={scBusy} className="btn btn-amber w-full text-[13.5px] py-2.5 disabled:opacity-60">
+            {scBusy ? "✨ AI กำลังเขียนสคริปต์..." : "✨ สร้างสคริปต์โทร"}
+          </button>
+        </div>
+        {scErr && <p className="mt-2 text-[12.5px] text-[#D94141] bg-[#D94141]/10 rounded-lg px-3 py-2">⚠ {scErr}</p>}
+        {scData && (
+          <div className="mt-3 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[13.5px] font-bold text-navy">📞 {scData.title}</p>
+              <div className="flex gap-2 shrink-0">
+                <button onClick={() => navigator.clipboard?.writeText(scriptPlainText(scData))}
+                  className="btn btn-primary text-[12px] py-1.5 px-3">📋 คัดลอกทั้งหมด</button>
+                <button onClick={genScript} disabled={scBusy} className="text-[12px] font-semibold text-sky hover:text-brand px-2 disabled:opacity-50">↻ สร้างใหม่</button>
+              </div>
+            </div>
+            <div className="grid gap-3 min-[900px]:grid-cols-2 items-start">
+              <div className="rounded-xl border border-ice bg-white p-3.5">
+                <p className="text-[11px] font-bold text-brand">① เปิดสาย</p>
+                <p className="mt-1 text-[13px] leading-relaxed whitespace-pre-wrap text-ink">{scData.opening}</p>
+              </div>
+              {scData.discover.length > 0 && (
+                <div className="rounded-xl border border-ice bg-white p-3.5">
+                  <p className="text-[11px] font-bold text-brand">② คำถามเก็บข้อมูล / ค้นหาความต้องการ</p>
+                  <ol className="mt-1 space-y-1 list-decimal list-inside text-[13px] leading-relaxed text-ink">
+                    {scData.discover.map((d, i) => <li key={i}>{d}</li>)}
+                  </ol>
+                </div>
+              )}
+              {scData.pitch && (
+                <div className="rounded-xl border border-ice bg-white p-3.5">
+                  <p className="text-[11px] font-bold text-brand">③ นำเสนอคุณค่า</p>
+                  <p className="mt-1 text-[13px] leading-relaxed whitespace-pre-wrap text-ink">{scData.pitch}</p>
+                </div>
+              )}
+              <div className="rounded-xl border border-ice bg-white p-3.5">
+                <p className="text-[11px] font-bold text-brand">④ ปิดสาย / ขั้นถัดไป</p>
+                <p className="mt-1 text-[13px] leading-relaxed whitespace-pre-wrap text-ink">{scData.closing}</p>
+              </div>
+            </div>
+            {scData.objections.length > 0 && (
+              <div className="rounded-xl border border-ice bg-ice/20 p-3.5">
+                <p className="text-[12px] font-bold text-navy">🛡 รับมือข้อโต้แย้งที่พบบ่อย</p>
+                <div className="mt-2 space-y-2">
+                  {scData.objections.map((o, i) => (
+                    <div key={i} className="rounded-lg bg-white border border-ice px-3 py-2">
+                      <p className="text-[12.5px] text-[#D94141] font-semibold">ลูกค้า: “{o.o}”</p>
+                      <p className="text-[13px] text-ink mt-0.5 leading-relaxed whitespace-pre-wrap">เรา: {o.r}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {scData.voicemail && (
+              <div className="rounded-xl border border-sky/40 bg-sky/5 p-3.5">
+                <p className="text-[12px] font-bold text-navy">📩 ถ้าไม่รับสาย / ฝากข้อความ</p>
+                <p className="mt-1 text-[13px] leading-relaxed whitespace-pre-wrap text-ink">{scData.voicemail}</p>
+              </div>
+            )}
+            {scData.tips.length > 0 && (
+              <div className="rounded-xl border border-amber/40 bg-amber/5 p-3.5">
+                <p className="text-[12px] font-bold text-navy">💡 เคล็ดลับใช้สคริปต์</p>
+                <div className="mt-1.5 space-y-1">
+                  {scData.tips.map((t, i) => <p key={i} className="text-[12.5px] text-ink leading-relaxed">• {t}</p>)}
                 </div>
               </div>
             )}
